@@ -73,8 +73,6 @@
   </div>
   <canvas id="c"></canvas>
   <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
-  
-
   <script>
   // ====== Mini Minecraft — Perf Patch + AI (sandbox‑safe) ======
   // Why it was slow: the world used thousands of individual meshes built in one frame.
@@ -231,9 +229,15 @@
 
   let lastGroundedAt = performance.now(); let lastJumpPressedAt = -Infinity;
 
+  // When typing in any input/textarea/contentEditable, ignore game controls
+  function isTyping(){
+    const el = document.activeElement;
+    return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable === true);
+  }
+
   playBtn.addEventListener('click', ()=>{ overlay.classList.add('hidden'); overlayHidden = true; flash('Free‑look enabled. Click hotbar to select blocks.'); });
 
-  window.addEventListener('keydown', (e)=>{ if(e.repeat) return; switch(e.code){
+  window.addEventListener('keydown', (e)=>{ if(e.repeat) return; if(isTyping()) return; switch(e.code){
     case 'KeyW': pressed.w=true; break; case 'KeyA': pressed.a=true; break; case 'KeyS': pressed.s=true; break; case 'KeyD': pressed.d=true; break;
     case 'Space': pressed.space=true; lastJumpPressedAt = performance.now(); break;
     case 'ShiftLeft': case 'ShiftRight': pressed.shift=true; break; case 'ControlLeft': case 'ControlRight': pressed.ctrl=true; break;
@@ -251,19 +255,19 @@
       break;
     case 'ArrowLeft': yaw += 0.04; break; case 'ArrowRight': yaw -= 0.04; break; case 'ArrowUp': pitch += 0.03; clampPitch(); break; case 'ArrowDown': pitch -= 0.03; clampPitch(); break; }
   });
-  window.addEventListener('keyup', (e)=>{ switch(e.code){ case 'KeyW': pressed.w=false; break; case 'KeyA': pressed.a=false; break; case 'KeyS': pressed.s=false; break; case 'KeyD': pressed.d=false; break; case 'Space': pressed.space=false; break; case 'ShiftLeft': case 'ShiftRight': pressed.shift=false; break; case 'ControlLeft': case 'ControlRight': pressed.ctrl=false; break; } });
+  window.addEventListener('keyup', (e)=>{ if(isTyping()) return; switch(e.code){ case 'KeyW': pressed.w=false; break; case 'KeyA': pressed.a=false; break; case 'KeyS': pressed.s=false; break; case 'KeyD': pressed.d=false; break; case 'Space': pressed.space=false; break; case 'ShiftLeft': case 'ShiftRight': pressed.shift=false; break; case 'ControlLeft': case 'ControlRight': pressed.ctrl=false; break; } });
 
   function clampPitch(){ const maxPitch = Math.PI/2 - 0.01; if(pitch>maxPitch) pitch=maxPitch; if(pitch<-maxPitch) pitch=-maxPitch; }
 
   canvas.addEventListener('contextmenu', (e)=> e.preventDefault(), { passive:false });
-  window.addEventListener('mousemove', (e)=>{ if(!overlayHidden) return; if(lookMode!=='free' || lookDragging) return; const dx=(e.movementX||0), dy=(e.movementY||0); yaw -= dx*YAW_PER_PX; pitch += (invertY?1:-1)*dy*PITCH_PER_PX; clampPitch(); });
+  window.addEventListener('mousemove', (e)=>{ if(!overlayHidden) return; if(isTyping()) return; if(lookMode!=='free' || lookDragging) return; const dx=(e.movementX||0), dy=(e.movementY||0); yaw -= dx*YAW_PER_PX; pitch += (invertY?1:-1)*dy*PITCH_PER_PX; clampPitch(); });
   canvas.addEventListener('pointerdown', (e)=>{ if(e.button===2){ lookDragging=true; dragPixels=0; try{ canvas.setPointerCapture(e.pointerId);}catch(_){ }} else if(e.button===0){ e.preventDefault(); const npcHit=pickNPC(); if(npcHit) openNPCChat(npcHit.object.userData.npc); else mineUnderCrosshair(); } }, { passive:false });
   canvas.addEventListener('pointermove', (e)=>{ if(!lookDragging) return; const dx=(e.movementX||0), dy=(e.movementY||0); yaw -= dx*YAW_PER_PX; pitch += (invertY?1:-1)*dy*PITCH_PER_PX; clampPitch(); dragPixels += Math.abs(dx)+Math.abs(dy); });
   canvas.addEventListener('pointerup', (e)=>{ if(e.button===2){ const didDrag=dragPixels>3; lookDragging=false; dragPixels=0; try{ canvas.releasePointerCapture(e.pointerId);}catch(_){ } if(!didDrag){ placeAtTargetOrFront(); } } });
 
   // Hotbar
   hud.addEventListener('click', (e)=>{ const el=e.target.closest('.slot'); if(!el) return; const i=Number(el.dataset.i); if(Number.isInteger(i)) setSelected(i); });
-  window.addEventListener('wheel', (e)=>{ if(!overlayHidden) return; const dir = e.deltaY>0? 1 : -1; setSelected((selectedIndex + dir + BLOCK_TYPES.length)%BLOCK_TYPES.length); }, { passive:true });
+  window.addEventListener('wheel', (e)=>{ if(!overlayHidden) return; if(isTyping()) return; const dir = e.deltaY>0? 1 : -1; setSelected((selectedIndex + dir + BLOCK_TYPES.length)%BLOCK_TYPES.length); }, { passive:true });
   function setSelected(i){ selectedIndex = i; updateHotbar(); }
 
   // Mining & placing (blocks)
@@ -321,6 +325,8 @@
   let activeNPC = null;
   npcForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const text=npcInput.value.trim(); if(!text||!activeNPC) return; appendChat('you', text); npcInput.value=''; const reply = await askModel(activeNPC.model, text); appendChat(activeNPC.model, reply); });
   npcClose.addEventListener('click', ()=>{ npcUI.classList.add('hidden'); activeNPC=null; });
+  // While typing in the chat box, stop key events from reaching the game; allow ESC to close
+  npcInput.addEventListener('keydown', (e)=>{ e.stopPropagation(); if(e.code==='Escape'){ npcUI.classList.add('hidden'); activeNPC=null; npcInput.blur(); } });
 
   function openNPCChat(npc){ activeNPC = npc; npcUI.classList.remove('hidden'); npcNameEl.textContent = npc.name; npcModelEl.textContent = `(${npc.model})`; appendChat('system', `Talking to ${npc.name}.`); npcInput.focus(); }
   function talkToNearestNPC(){ const n = nearestNPC(); if(n) openNPCChat(n.mesh.userData.npc); else flash('No AI nearby. Walk closer.'); }
@@ -410,6 +416,11 @@
     const yaw0=0; const f=new THREE.Vector3(-Math.sin(yaw0),0,-Math.cos(yaw0)); const r=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0)); assert('right.x at yaw=0 is +1', Math.abs(r.x-1)<1e-6 && Math.abs(r.z)<1e-6);
     const p=0.25; const dir=new THREE.Vector3(-Math.sin(0)*Math.cos(p), Math.sin(p), -Math.cos(0)*Math.cos(p)); assert('pitch positive looks up', dir.y>0);
     setSelected(2); assert('selectedIndex==2', selectedIndex===2);
+
+    // Typing detection test
+    const ti=document.createElement('input'); document.body.appendChild(ti); ti.focus();
+    assert('isTyping() true when input focused', (function(){ return (document.activeElement===ti) && (typeof isTyping==='function') && isTyping(); })());
+    ti.blur(); document.body.removeChild(ti);
 
     // Added perf/stream checks
     ensureChunksAround(0,0); assert('chunks > 0 after ensure', loadedChunks.size>0);
