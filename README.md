@@ -1,4 +1,4 @@
-# MiniMinecraft
+# Virtual-LLMs
 Testing a new thing in AI. do now worry 
 
 <img width="1914" height="935" alt="image" src="https://github.com/user-attachments/assets/0f9d823f-d6ab-4fce-be9d-52e89564c120" />
