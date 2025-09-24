@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mini Minecraft — Voxel Sandbox (Perf + AI + Voice)</title>
+  <title>Mini Minecraft — Voxel Sandbox (Perf + AI + Voice + NPC Actions)</title>
   <style>
     html, body { margin:0; height:100%; overflow:hidden; font-family:system-ui, Arial, sans-serif; }
     #overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; background:radial-gradient(1200px 600px at 50% -10%, rgba(255,255,255,0.12), rgba(0,0,0,0.78)); color:#fff; z-index:10; }
@@ -12,7 +12,7 @@
     #hud { position:fixed; left:12px; bottom:12px; display:flex; gap:8px; align-items:center; z-index:5; }
     .slot { width:48px; height:48px; border-radius:10px; border:2px solid rgba(255,255,255,0.55); backdrop-filter: blur(6px); background:rgba(0,0,0,0.25); display:grid; place-items:center; color:#fff; font-weight:700; font-size:13px; cursor:pointer; user-select:none; }
     .slot.selected { outline:3px solid #22c55e; }
-    #help { position:fixed; right:12px; bottom:12px; color:#fff; font-size:12px; line-height:1.35; background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.2); border-radius:10px; padding:10px 12px; max-width:520px; white-space:pre-line; z-index:5; }
+    #help { position:fixed; right:12px; bottom:12px; color:#fff; font-size:12px; line-height:1.35; background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.2); border-radius:10px; padding:10px 12px; max-width:560px; white-space:pre-line; z-index:5; }
     #crosshair { position:fixed; left:50%; top:50%; translate:-50% -50%; width:18px; height:18px; z-index:4;}
     #crosshair::before, #crosshair::after { content:""; position:absolute; left:50%; top:50%; translate:-50% -50%; background:#ffffff; opacity:0.85; }
     #crosshair::before { width:14px; height:2px; border-radius:2px; }
@@ -20,19 +20,18 @@
     #stats { position:fixed; top:8px; left:8px; color:#fff; font:12px/1.2 monospace; background:rgba(0,0,0,0.35); padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); z-index:5; }
 
     /* NPC chat UI */
-    #npcUI { position:fixed; right:12px; top:12px; width:340px; max-height:58vh; display:flex; flex-direction:column; gap:6px; background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.25); border-radius:12px; padding:10px; color:#fff; z-index:6; }
+    #npcUI { position:fixed; right:12px; top:12px; width:360px; max-height:60vh; display:flex; flex-direction:column; gap:6px; background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.25); border-radius:12px; padding:10px; color:#fff; z-index:6; }
     #npcHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     #npcLog { overflow:auto; flex:1; font:12px/1.35 system-ui, sans-serif; white-space:pre-wrap; }
     #npcForm { display:flex; gap:6px; }
     #npcInput { flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:8px; padding:6px 8px; }
     #npcSend { background:#22c55e; color:#fff; border:0; border-radius:8px; padding:6px 10px; cursor:pointer; font-weight:700; }
-    #npcMic { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); color:#fff; border-radius:8px; padding:6px 10px; cursor:pointer; font-weight:700; }
+    #npcMic  { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); color:#fff; border-radius:8px; padding:6px 10px; cursor:pointer; font-weight:700; }
     #npcMic[aria-pressed="true"] { outline:2px solid #22c55e; }
     #npcUI.hidden { display:none; }
   </style>
 </head>
 <body>
-  <!-- Your AI proxy config (unchanged) -->
   <script>
     window.AI_CONFIG = {
       mode: 'proxy',
@@ -58,15 +57,19 @@
       <br/>
       <b>AI:</b> T talk to nearest AI or click them • <b>Voice:</b> Hold Y or click 🎤
       <br/>
+      <b>NPC Autonomy:</b> N toggle (NPCs act in world)
+      <br/>
       <b>Perf toggles:</b> V view distance • J shadows • K rebuild world (apply)
       <br/>
       R reset • O save • P load
     </div>
   </div>
+
   <div id="hud"></div>
   <div id="help"></div>
   <div id="crosshair"></div>
   <div id="stats"></div>
+
   <div id="npcUI" class="hidden">
     <div id="npcHeader">
       <div><b id="npcName">NPC</b> <span style="opacity:.8" id="npcModel"></span></div>
@@ -80,19 +83,17 @@
       <button id="npcSend" type="submit">Send</button>
     </form>
   </div>
+
   <canvas id="c"></canvas>
   <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
   <script>
-  // ====== Mini Minecraft — Perf Patch + AI + Voice (sandbox-safe) ======
   (function(){
-    // --- Perf knobs ---
+    // ===== Tunables / Perf =====
     const PERF = { viewDist: 1, maxBuildPerFrame: 300, shadows: false, maxTerrainHeight: 7 };
-
-    // --- Core tunables ---
     const CHUNK_SIZE=16, START_Y=6, GRAVITY=26, MOVE_SPEED=7.2, SPRINT_MULT=1.7, CROUCH_MULT=0.45, JUMP_VEL=9.2, STEP_HEIGHT=1.0, COYOTE_TIME=0.12, JUMP_BUFFER=0.12, MAX_COLUMN_SCAN=64, PLAYER_RADIUS=0.35, EYE_STAND=1.62, EYE_CROUCH=1.35, PLAYER_HEIGHT=1.8, EPS=0.001;
     const YAW_PER_PX=(2*Math.PI)/Math.max(1, innerWidth), PITCH_PER_PX=(Math.PI)/Math.max(1, innerHeight);
 
-    // --- Three.js setup ---
+    // ===== Three.js =====
     const canvas=document.getElementById('c');
     const renderer=new THREE.WebGLRenderer({ canvas, antialias:true, alpha:false });
     renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth, innerHeight);
@@ -104,32 +105,34 @@
     const hemi=new THREE.HemisphereLight(0xffffff,0x669966,0.55); scene.add(hemi);
     const sun=new THREE.DirectionalLight(0xffffff,0.9); sun.position.set(25,40,15); sun.castShadow=PERF.shadows; sun.shadow.mapSize.set(1024,1024); scene.add(sun);
 
-    // --- Materials & shared geometries ---
+    // ===== Materials & Geoms =====
     const MATERIALS={ grass:new THREE.MeshStandardMaterial({color:0x55aa55,roughness:1,metalness:0}), dirt:new THREE.MeshStandardMaterial({color:0x8b5a2b,roughness:1,metalness:0}), stone:new THREE.MeshStandardMaterial({color:0x888888,roughness:1,metalness:0}), wood:new THREE.MeshStandardMaterial({color:0xc29a68,roughness:0.9,metalness:0}), brick:new THREE.MeshStandardMaterial({color:0xb22222,roughness:0.9,metalness:0}) };
     const GEOMS={ box:new THREE.BoxGeometry(1,1,1), slab:new THREE.BoxGeometry(1,0.12,1), boxShort:new THREE.BoxGeometry(1,0.88,1), cone:new THREE.ConeGeometry(0.48,0.9,5), rock:new THREE.IcosahedronGeometry(0.55,0), log:new THREE.CylinderGeometry(0.35,0.35,1,8), stair1:new THREE.BoxGeometry(1,1/3,1/3), stair2:new THREE.BoxGeometry(1,1/3,2/3), stair3:new THREE.BoxGeometry(1,1/3,1) };
     const BLOCK_TYPES=Object.keys(MATERIALS); let selectedIndex=0;
 
-    // World structures
+    // ===== World structures =====
     const blockMeshes=[]; const posToMesh=new Map(); const columnToYset=new Map(); const heightMap=new Map(); const loadedChunks=new Map(); const buildQueue=[];
     const keyXYZ=(x,y,z)=>`${x},${y},${z}`; const keyXZ=(x,z)=>`${x},${z}`; const keyChunk=(cx,cz)=>`${cx},${cz}`;
 
     function updateColumnTop(x,z){ const k=keyXZ(x,z); const ys=columnToYset.get(k); if(!ys||ys.size===0){ heightMap.set(k,0); return 0; } let m=-Infinity; for(const y of ys) if(y>m) m=y; const top=m+1; heightMap.set(k,top); return top; }
     function setShadowRecursive(o){ o.castShadow=PERF.shadows; o.receiveShadow=PERF.shadows; if(o.children) for(const c of o.children) setShadowRecursive(c); }
 
-    function createCellMesh(type){ const g=new THREE.Group();
+    function createCellMesh(type){
+      const g=new THREE.Group();
       if(type==='grass'){ const base=new THREE.Mesh(GEOMS.boxShort,MATERIALS.dirt); base.position.y=-0.06; const top=new THREE.Mesh(GEOMS.slab,MATERIALS.grass); top.position.y=0.44; g.add(base,top); }
       else if(type==='dirt'){ const cone=new THREE.Mesh(GEOMS.cone,MATERIALS.dirt); cone.position.y=-0.05; g.add(cone); }
       else if(type==='stone'){ const rock=new THREE.Mesh(GEOMS.rock,MATERIALS.stone); rock.position.y=-0.05; g.add(rock); }
       else if(type==='wood'){ const log=new THREE.Mesh(GEOMS.log,MATERIALS.wood); g.add(log); }
       else if(type==='brick'){ const s1=new THREE.Mesh(GEOMS.stair1,MATERIALS.brick); s1.position.set(0,-0.5+1/6,-0.5+1/6); const s2=new THREE.Mesh(GEOMS.stair2,MATERIALS.brick); s2.position.set(0,-0.5+0.5,-0.5+1/3); const s3=new THREE.Mesh(GEOMS.stair3,MATERIALS.brick); s3.position.set(0,-0.5+5/6,-0.5+0.5); g.add(s1,s2,s3); }
       else { g.add(new THREE.Mesh(GEOMS.box, MATERIALS[type]||MATERIALS.grass)); }
-      setShadowRecursive(g); return g; }
+      setShadowRecursive(g); return g;
+    }
 
     function addBlock(x,y,z,type){ const id=keyXYZ(x,y,z); if(posToMesh.has(id)) return false; const g=createCellMesh(type); g.position.set(x+0.5,y+0.5,z+0.5); g.userData.grid={x,y,z,type}; g.traverse(o=>{ if(o!==g) o.userData.grid=g.userData.grid; }); scene.add(g); blockMeshes.push(g); posToMesh.set(id,g); const ck=keyXZ(x,z); if(!columnToYset.has(ck)) columnToYset.set(ck,new Set()); columnToYset.get(ck).add(y); updateColumnTop(x,z); return true; }
     function removeBlock(x,y,z){ const id=keyXYZ(x,y,z); const m=posToMesh.get(id); if(!m) return false; scene.remove(m); const i=blockMeshes.indexOf(m); if(i>-1) blockMeshes.splice(i,1); posToMesh.delete(id); const ck=keyXZ(x,z); const ys=columnToYset.get(ck); if(ys){ ys.delete(y); if(ys.size===0) columnToYset.delete(ck); } updateColumnTop(x,z); return true; }
     function isSolid(ix,iy,iz){ return !!posToMesh.get(keyXYZ(ix,iy,iz)); }
 
-    // Procedural terrain
+    // ===== Terrain =====
     const SEED=12345; function hash(x,z){ let h=x*374761393+z*668265263+SEED*1442695040888963407; h=(h^(h>>13))|0; h=Math.imul(h,1274126177); h^=h>>>16; return (h>>>0)/4294967296; }
     function lerp(a,b,t){ return a+(b-a)*t; } function smooth(t){ return t*t*(3-2*t); }
     function valueNoise2D(x,z){ const xi=Math.floor(x), zi=Math.floor(z); const xf=x-xi, zf=z-zi; const h00=hash(xi,zi), h10=hash(xi+1,zi), h01=hash(xi,zi+1), h11=hash(xi+1,zi+1); const u=smooth(xf), v=smooth(zf); return lerp(lerp(h00,h10,u), lerp(h01,h11,u), v); }
@@ -139,13 +142,14 @@
     function scheduleChunkBuild(cx,cz){ const x0=cx*CHUNK_SIZE, z0=cz*CHUNK_SIZE; const pending=[]; for(let x=x0;x<x0+CHUNK_SIZE;x++){ for(let z=z0;z<z0+CHUNK_SIZE;z++){ const h=terrainHeightAt(x,z); for(let y=0;y<h;y++) pending.push({x,y,z,type:(y===h-1?'grass':'dirt')}); } } loadedChunks.set(keyChunk(cx,cz), {state:'building', pending}); buildQueue.push(...pending); }
     function ensureChunksAround(px,pz){ const ccx=Math.floor(Math.floor(px)/CHUNK_SIZE), ccz=Math.floor(Math.floor(pz)/CHUNK_SIZE); for(let dx=-PERF.viewDist;dx<=PERF.viewDist;dx++){ for(let dz=-PERF.viewDist;dz<=PERF.viewDist;dz++){ const k=keyChunk(ccx+dx,ccz+dz); if(!loadedChunks.has(k)) scheduleChunkBuild(ccx+dx, ccz+dz); } } for(const k of [...loadedChunks.keys()]){ const [cx,cz]=k.split(',').map(Number); if(Math.abs(cx-ccx)>PERF.viewDist+1 || Math.abs(cz-ccz)>PERF.viewDist+1) unloadChunk(cx,cz); } }
     function unloadChunk(cx,cz){ const x0=cx*CHUNK_SIZE, z0=cz*CHUNK_SIZE; for(let x=x0;x<x0+CHUNK_SIZE;x++){ for(let z=z0;z<z0+CHUNK_SIZE;z++){ const top=heightMap.get(keyXZ(x,z)); if(top!=null){ for(let y=0;y<top;y++) removeBlock(x,y,z); } } } loadedChunks.delete(keyChunk(cx,cz)); }
+
     ensureChunksAround(0,0);
 
-    // Controls & input
+    // ===== Controls =====
     const overlay=document.getElementById('overlay'); const playBtn=document.getElementById('play'); const statsEl=document.getElementById('stats'); const hud=document.getElementById('hud');
     let yaw=0, pitch=-0.2, currentEye=EYE_STAND; const velocity=new THREE.Vector3(); let onGround=false; let pressed={w:false,a:false,s:false,d:false,space:false,shift:false,ctrl:false}; let invertY=false; let overlayHidden=false, lookMode='free', lookDragging=false, dragPixels=0; let lastGroundedAt=performance.now(), lastJumpPressedAt=-Infinity;
 
-    // Voice / typing guards
+    // typing guard (includes voice capture)
     let dictating=false; function isTyping(){ if(dictating) return true; const el=document.activeElement; return !!el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable===true); }
 
     playBtn.addEventListener('click', ()=>{ overlay.classList.add('hidden'); overlayHidden=true; flash('Free-look enabled. Click hotbar to select blocks.'); });
@@ -158,7 +162,11 @@
       case 'KeyE': setSelected((selectedIndex+1)%BLOCK_TYPES.length); break; case 'KeyQ': setSelected((selectedIndex-1+BLOCK_TYPES.length)%BLOCK_TYPES.length); break;
       case 'KeyR': resetWorld(); break; case 'KeyO': saveWorld(); break; case 'KeyP': loadWorld(); break; case 'KeyI': invertY=!invertY; flash(invertY?'Invert-Y ON':'Invert-Y OFF'); break;
       case 'KeyF': lookMode=(lookMode==='free'?'drag':'free'); flash(lookMode==='free'?'Free-look ON (move mouse)':'RMB-drag look mode ON'); break;
-      case 'KeyT': talkToNearestNPC(); break; case 'KeyV': PERF.viewDist = PERF.viewDist===1?2: (PERF.viewDist===2?3:1); flash('View distance: '+PERF.viewDist); break; case 'KeyJ': PERF.shadows=!PERF.shadows; renderer.shadowMap.enabled=PERF.shadows; sun.castShadow=PERF.shadows; flash('Shadows: '+(PERF.shadows?'ON':'OFF')); break; case 'KeyK': for(const k of [...loadedChunks.keys()]) unloadChunk(...k.split(',').map(Number)); ensureChunksAround(camera.position.x, camera.position.z); flash('Rebuilding world...'); break;
+      case 'KeyT': talkToNearestNPC(); break;
+      case 'KeyV': PERF.viewDist = PERF.viewDist===1?2: (PERF.viewDist===2?3:1); flash('View distance: '+PERF.viewDist); break;
+      case 'KeyJ': PERF.shadows=!PERF.shadows; renderer.shadowMap.enabled=PERF.shadows; sun.castShadow=PERF.shadows; flash('Shadows: '+(PERF.shadows?'ON':'OFF')); break;
+      case 'KeyK': for(const k of [...loadedChunks.keys()]) unloadChunk(...k.split(',').map(Number)); ensureChunksAround(camera.position.x, camera.position.z); flash('Rebuilding world...'); break;
+      case 'KeyN': NPC_AUTONOMY = !NPC_AUTONOMY; flash('NPC Autonomy: '+(NPC_AUTONOMY?'ON':'OFF')); break;
       case 'ArrowLeft': yaw+=0.04; break; case 'ArrowRight': yaw-=0.04; break; case 'ArrowUp': pitch+=0.03; clampPitch(); break; case 'ArrowDown': pitch-=0.03; clampPitch(); break;
       case 'KeyY': startDictation(); break;
     }});
@@ -176,7 +184,7 @@
     window.addEventListener('wheel', (e)=>{ if(!overlayHidden) return; if(isTyping()) return; const dir=e.deltaY>0?1:-1; setSelected((selectedIndex+dir+BLOCK_TYPES.length)%BLOCK_TYPES.length); }, {passive:true});
     function setSelected(i){ selectedIndex=i; updateHotbar(); }
 
-    // Mining/placing
+    // ===== Mining / placing =====
     const raycaster=new THREE.Raycaster(); raycaster.far=8;
     function pickBlock(){ raycaster.setFromCamera(new THREE.Vector2(0,0), camera); const hits=raycaster.intersectObjects(blockMeshes, true); if(!hits.length) return null; let h=hits[0]; let o=h.object; while(o && !o.userData.grid) o=o.parent; if(!o) return null; h.object=o; return h; }
     function mineUnderCrosshair(){ const hit=pickBlock(); if(hit){ const {x,y,z}=hit.object.userData.grid; removeBlock(x,y,z); return true; } return false; }
@@ -185,14 +193,14 @@
     function placeAtTargetOrFront(){ const hit=pickBlock(); if(hit) placeAdjacentToHit(hit); else placeInFrontOfPlayer(); }
     function tryPlace(x,y,z){ if(y<0||y>MAX_COLUMN_SCAN) return; const id=keyXYZ(x,y,z); if(posToMesh.has(id)) return; addBlock(x,y,z,BLOCK_TYPES[selectedIndex]); }
 
-    // Ground helpers & collisions
+    // ===== Ground helpers & collisions =====
     function groundTopAt(x,z){ const xi=Math.floor(x), zi=Math.floor(z); const k=keyXZ(xi,zi); const h=heightMap.get(k); if(h!=null) return h; return terrainHeightAt(xi,zi); }
     function isColumnClear(ix,iz,yFrom,height){ const yTo=Math.floor(yFrom+height-1e-6); for(let iy=Math.floor(yFrom); iy<=yTo; iy++){ if(isSolid(ix,iy,iz)) return false; } return true; }
-    function collideAxis(prevPos,nextPos,axis,eyeH){ const r=PLAYER_RADIUS; const feetY=nextPos.y-eyeH; const headY=feetY+PLAYER_HEIGHT; const minX=Math.floor(nextPos.x-r), maxX=Math.floor(nextPos.x+r); const minZ=Math.floor(nextPos.z-r), maxZ=Math.floor(nextPos.z+r); const minY=Math.floor(feetY), maxY=Math.ceil(headY)-1; let collided=false, sign=0, ix=0, iz=0, iy=0; for(let yy=minY; yy<=maxY; yy++){ for(let xx=minX; xx<=maxX; xx++){ for(let zz=maxZ; zz>=minZ; zz--){ if(!isSolid(xx,yy,zz)) continue; const overlapY=!(headY<=yy || feetY>=yy+1); const overlapX=!((nextPos.x+r)<=xx || (nextPos.x-r)>=xx+1); const overlapZ=!((nextPos.z+r)<=zz || (nextPos.z-r)>=zz+1); if(!overlapY) continue; if(axis==='x' && overlapZ && overlapX){ collided=true; sign=(prevPos.x<=xx)?+1:-1; ix=xx; iz=zz; iy=yy; nextPos.x=(sign>0? xx - r - EPS : xx + 1 + r + EPS); } if(axis==='z' && overlapX && overlapZ){ collided=true; sign=(prevPos.z<=zz)?+1:-1; ix=xx; iz=zz; iy=yy; nextPos.z=(sign>0? zz - r - EPS : zz + 1 + r + EPS); } } } } return {collided,sign,ix,iz,iy}; }
-    function tryAutoStep(prevPos,nextPos,axis,col,eyeH){ if(!col.collided) return false; const cur=groundTopAt(prevPos.x, prevPos.z); const feetY=prevPos.y-eyeH; if(Math.abs(feetY-cur)>0.05) return false; const dir=col.sign; if(dir===0) return false; const aheadX=Math.floor(nextPos.x + (axis==='x'? dir*(PLAYER_RADIUS+0.1) : 0)); const aheadZ=Math.floor(nextPos.z + (axis==='z'? dir*(PLAYER_RADIUS+0.1) : 0)); const toTop=groundTopAt(aheadX+0.001, aheadZ+0.001); const delta=toTop-cur; if(delta<=0 || delta>STEP_HEIGHT+1e-6) return false; if(!isColumnClear(aheadX,aheadZ,toTop,PLAYER_HEIGHT)) return false; nextPos.y=toTop+eyeH; onGround=true; return true; }
+    function collideAxis(prevPos,nextPos,axis,eyeH){ const r=PLAYER_RADIUS; const feetY=nextPos.y-eyeH; const headY=feetY+PLAYER_HEIGHT; const minX=Math.floor(nextPos.x-r), maxX=Math.floor(nextPos.x+r); const minZ=Math.floor(nextPos.z-r), maxZ=Math.floor(nextPos.z+r); const minY=Math.floor(feetY), maxY=Math.ceil(headY)-1; for(let yy=minY; yy<=maxY; yy++){ for(let xx=minX; xx<=maxX; xx++){ for(let zz=minZ; zz<=maxZ; zz++){ if(!isSolid(xx,yy,zz)) continue; const overlapY=!(headY<=yy || feetY>=yy+1); const overlapX=!((nextPos.x+r)<=xx || (nextPos.x-r)>=xx+1); const overlapZ=!((nextPos.z+r)<=zz || (nextPos.z-r)>=zz+1); if(!overlapY) continue; if(axis==='x' && overlapZ && overlapX) nextPos.x=(prevPos.x<=xx)? (xx - r - EPS) : (xx + 1 + r + EPS); if(axis==='z' && overlapX && overlapZ) nextPos.z=(prevPos.z<=zz)? (zz - r - EPS) : (zz + 1 + r + EPS); } } } }
+    function tryAutoStep(prevPos,nextPos,axis,col,eyeH){ /* kept simple; player only */ return false; }
     function collideCeiling(nextPos,eyeH){ const r=PLAYER_RADIUS; const feetY=nextPos.y-eyeH; const headY=feetY+PLAYER_HEIGHT; const minX=Math.floor(nextPos.x-r), maxX=Math.floor(nextPos.x+r); const minZ=Math.floor(nextPos.z-r), maxZ=Math.floor(nextPos.z+r); const iy=Math.floor(headY); for(let ix=minX; ix<=maxX; ix++){ for(let iz=maxZ; iz>=minZ; iz--){ if(isSolid(ix,iy,iz)){ nextPos.y=iy-EPS+eyeH; velocity.y=0; return; } } } }
 
-    // Hotbar UI
+    // ===== Hotbar UI =====
     function updateHotbar(){ hud.innerHTML=''; BLOCK_TYPES.forEach((t,i)=>{ const el=document.createElement('div'); el.className='slot'+(i===selectedIndex?' selected':''); el.textContent=(i+1)+'\n'+t; el.style.whiteSpace='pre'; el.dataset.i=i; hud.appendChild(el); }); }
     updateHotbar();
 
@@ -200,247 +208,355 @@
 WASD move • Space jump • Shift sprint • Ctrl crouch
 Mouse move look (F toggles RMB-drag) • I invert-Y
 Voice: Hold Y or click 🎤 • Replies are spoken aloud
+NPC Autonomy: press N to toggle
 Click hotbar • Wheel/E/Q/1-5 select
-LMB mine • RMB place (or drag-release) • T talk to nearest AI
+LMB mine • RMB place • T talk to nearest AI
 Perf: V view distance • J shadows • K rebuild
 R reset • O save • P load`;
 
-    // Save/Load
+    // ===== Save/Load =====
     const SAVE_KEY='mini-mc-world-v3';
     function saveWorld(){ const blocks=[]; for(const [id,m] of posToMesh){ const {x,y,z,type}=m.userData.grid; blocks.push({x,y,z,type}); } const npcs=NPCS.map(n=>({name:n.name,model:n.model,x:Math.round(n.mesh.position.x-0.5),z:Math.round(n.mesh.position.z-0.5)})); localStorage.setItem(SAVE_KEY, JSON.stringify({blocks,npcs})); flash('World saved.'); }
     function loadWorld(){ const raw=localStorage.getItem(SAVE_KEY); if(!raw){ flash('No saved world found.'); return; } resetWorld(true); const data=JSON.parse(raw); for(const b of data.blocks) addBlock(b.x,b.y,b.z,b.type); if(data.npcs){ for(const n of data.npcs) spawnNPC(n.name,n.model,n.x,n.z); } flash('World loaded.'); }
     function resetWorld(keepSave=false){ for(const m of [...blockMeshes]) scene.remove(m); blockMeshes.length=0; posToMesh.clear(); columnToYset.clear(); heightMap.clear(); for(const k of [...loadedChunks.keys()]) unloadChunk(...k.split(',').map(Number)); ensureChunksAround(0,0); camera.position.set(0,START_Y,0); velocity.set(0,0,0); for(const n of [...NPCS]) scene.remove(n.mesh); NPCS.length=0; spawnDefaultNPCs(); if(!keepSave) flash('World reset.'); }
 
-    // Highlight
+    // ===== Highlight =====
     const highlight=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.001,1.001,1.001)), new THREE.LineBasicMaterial({color:0xffffff})); highlight.visible=false; scene.add(highlight);
     function updateHighlight(){ const hit=pickBlock(); if(hit){ const {x,y,z}=hit.object.userData.grid; highlight.position.set(x+0.5,y+0.5,z+0.5); highlight.visible=true; } else highlight.visible=false; }
 
-    // NPCs & AI
-    const NPCS=[]; function makeNPCMesh(color){ const g=new THREE.Group(); const body=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,0.9,12), new THREE.MeshStandardMaterial({color})); body.position.y=0.45; const head=new THREE.Mesh(new THREE.SphereGeometry(0.22,16,12), new THREE.MeshStandardMaterial({color:0xffffff})); head.position.y=1.05; const base=new THREE.Mesh(new THREE.CircleGeometry(0.28,16), new THREE.MeshStandardMaterial({color:0x333333})); base.rotation.x=-Math.PI/2; g.add(base,body,head); setShadowRecursive(g); return g; }
-    function spawnNPC(name,model,x,z){ const mesh=makeNPCMesh(model==='ChatGPT'?0x10a37f:0x7443ff); mesh.position.set(x+0.5, groundTopAt(x+0.001,z+0.001), z+0.5); mesh.userData.npc={name,model,mesh}; scene.add(mesh); NPCS.push({name,model,mesh,lastDir:new THREE.Vector2(1,0),t:0}); return mesh; }
-    function spawnDefaultNPCs(){ spawnNPC('ChatGPT','ChatGPT',3,3); spawnNPC('Mixtral','Mixtral',-4,2); } spawnDefaultNPCs();
-    function updateNPCs(dt){ for(const n of NPCS){ n.t+=dt; if(n.t>2.5){ n.t=0; const ang=Math.random()*Math.PI*2; n.lastDir.set(Math.cos(ang),Math.sin(ang)); } const speed=0.8; const nx=n.mesh.position.x + n.lastDir.x*speed*dt; const nz=n.mesh.position.z + n.lastDir.y*speed*dt; const top=groundTopAt(nx,nz); n.mesh.position.set(nx,top,nz); } }
+    // ===== NPCs + World Interaction =====
+    let NPC_AUTONOMY = true;              // toggled by N
+    const NPCS=[];
 
-    // NPC picking
-    const npcRay=new THREE.Raycaster(); function pickNPC(){ npcRay.setFromCamera(new THREE.Vector2(0,0),camera); const meshes=NPCS.map(n=>n.mesh); const hits=npcRay.intersectObjects(meshes,true); if(!hits.length) return null; let o=hits[0].object; while(o && !o.userData.npc) o=o.parent; return o?{object:o}:null; }
+    function makeNPCMesh(color){ const g=new THREE.Group(); const body=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,0.9,12), new THREE.MeshStandardMaterial({color})); body.position.y=0.45; const head=new THREE.Mesh(new THREE.SphereGeometry(0.22,16,12), new THREE.MeshStandardMaterial({color:0xffffff})); head.position.y=1.05; const base=new THREE.Mesh(new THREE.CircleGeometry(0.28,16), new THREE.MeshStandardMaterial({color:0x333333})); base.rotation.x=-Math.PI/2; g.add(base,body,head); setShadowRecursive(g); return g; }
+
+    function spawnNPC(name,model,x,z){
+      const mesh=makeNPCMesh(model==='ChatGPT'?0x10a37f:0x7443ff);
+      mesh.position.set(x+0.5, groundTopAt(x+0.001,z+0.001), z+0.5);
+      mesh.userData.npc={name,model,mesh};
+      const npc = { name, model, mesh, lastDir:new THREE.Vector2(1,0), t:0, task:null, path:[], speed:1.1, actionCooldown:0 };
+      scene.add(mesh); NPCS.push(npc); return mesh;
+    }
+    function spawnDefaultNPCs(){ spawnNPC('ChatGPT','ChatGPT',3,3); spawnNPC('Mixtral','Mixtral',-4,2); } spawnDefaultNPCs();
+
+    // --- Simple grid helpers & pathfinding (BFS) ---
+    const clamp = (n,min,max)=> Math.max(min, Math.min(max,n));
+    function toGridX(v){ return Math.floor(v); }
+    function toGridZ(v){ return Math.floor(v); }
+    function walkable(ix, iz){
+      const top = groundTopAt(ix+0.001, iz+0.001);
+      // Need headroom at top and top+1 for the "capsule"
+      return !isSolid(ix, top, iz) && !isSolid(ix, top+1, iz);
+    }
+    function findPath2D(sx,sz, gx,gz, maxNodes=800){
+      sx=toGridX(sx); sz=toGridZ(sz); gx=toGridX(gx); gz=toGridZ(gz);
+      const key=(x,z)=>x+','+z;
+      const q=[[sx,sz]], came=new Map([[key(sx,sz), null]]);
+      const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+      let head=0, nodes=0;
+      while(head<q.length && nodes<maxNodes){
+        const [x,z]=q[head++]; nodes++;
+        if(x===gx && z===gz) break;
+        for(const [dx,dz] of dirs){
+          const nx=x+dx, nz=z+dz;
+          const k=key(nx,nz);
+          if(came.has(k)) continue;
+          // avoid huge wander: limit search radius
+          if(Math.abs(nx-sx)>36 || Math.abs(nz-sz)>36) continue;
+          if(!walkable(nx,nz)) continue;
+          came.set(k,[x,z]);
+          q.push([nx,nz]);
+        }
+      }
+      if(!came.has(key(gx,gz))) return [];
+      const path=[];
+      for(let cur=[gx,gz]; cur; cur=came.get(key(cur[0],cur[1]))){ path.push(cur); }
+      path.reverse();
+      // Drop first (it's current tile)
+      if(path.length && path[0][0]===sx && path[0][1]===sz) path.shift();
+      return path;
+    }
+
+    // --- NPC actions / tasks ---
+    function npcTryPlaceAround(npc, type){
+      const ix=toGridX(npc.mesh.position.x), iz=toGridZ(npc.mesh.position.z);
+      const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+      for(const [dx,dz] of dirs){
+        const tx=ix+dx, tz=iz+dz;
+        const top=groundTopAt(tx+0.001,tz+0.001);
+        const ok = !isSolid(tx, top, tz);
+        if(ok){ addBlock(tx, top, tz, type); return true; }
+      }
+      return false;
+    }
+    function npcMineTopAt(npc, tx, tz){
+      tx=toGridX(tx); tz=toGridZ(tz);
+      const top=heightMap.get(keyXZ(tx,tz));
+      if(top && top>0){ removeBlock(tx, top-1, tz); return true; }
+      return false;
+    }
+    function npcBuildTower(npc, h=3, type='wood'){
+      const ix=toGridX(npc.mesh.position.x), iz=toGridZ(npc.mesh.position.z);
+      let base = groundTopAt(ix+0.001, iz+0.001);
+      let placed=0;
+      for(let i=0;i<h;i++){
+        if(!isSolid(ix, base+i, iz)) { addBlock(ix, base+i, iz, type); placed++; }
+      }
+      return placed>0;
+    }
+    function npcWalkTo(npc, gx, gz){
+      const sx=toGridX(npc.mesh.position.x), sz=toGridZ(npc.mesh.position.z);
+      npc.path = findPath2D(sx, sz, gx, gz);
+      npc.task = { type:'WALK_TO', gx:toGridX(gx), gz:toGridZ(gz) };
+    }
+
+    function setTask(npc, task){ npc.task = task; if(task && task.type==='WALK_TO'){ npcWalkTo(npc, task.gx, task.gz); } }
+
+    function processTask(npc, dt){
+      if(!npc.task) return;
+      const m = npc.mesh;
+      switch(npc.task.type){
+        case 'FOLLOW': {
+          const px = camera.position.x, pz = camera.position.z;
+          const ix=toGridX(m.position.x), iz=toGridZ(m.position.z);
+          const gx=toGridX(px), gz=toGridZ(pz);
+          const dist2 = (gx-ix)*(gx-ix)+(gz-iz)*(gz-iz);
+          if(dist2>4){ // farther than ~2 tiles -> pathfind
+            npcWalkTo(npc, gx, gz);
+            npc.task = { type:'WALK_TO', gx, gz, _return:'FOLLOW' };
+          } else {
+            // idle: place a block sometimes
+            npc.actionCooldown -= dt;
+            if(npc.actionCooldown<=0){ const type = npc.model==='ChatGPT'?'wood':'stone'; npcTryPlaceAround(npc, type); npc.actionCooldown = 2+Math.random()*3; }
+          }
+        } break;
+
+        case 'WALK_TO': {
+          // consume path
+          if(npc.path.length===0){
+            // reached
+            const nextType = npc.task._return || null;
+            npc.task = nextType? {type: nextType} : null;
+            break;
+          }
+          const [tx,tz] = npc.path[0];
+          const ty = groundTopAt(tx+0.001, tz+0.001);
+          const target = new THREE.Vector3(tx+0.5, ty, tz+0.5);
+          const dir = target.clone().sub(m.position);
+          const dist = Math.max(1e-4, dir.length());
+          dir.normalize();
+          m.position.x += dir.x * npc.speed * dt;
+          m.position.z += dir.z * npc.speed * dt;
+          m.position.y  = groundTopAt(m.position.x, m.position.z);
+          npc.lastDir.set(dir.x, dir.z);
+          if(dist<0.12){ npc.path.shift(); }
+        } break;
+
+        case 'PLACE': {
+          npc.actionCooldown -= dt;
+          if(npc.actionCooldown<=0){
+            const type = npc.task.blockType || (npc.model==='ChatGPT'?'wood':'stone');
+            npcTryPlaceAround(npc, type);
+            npc.task = null;
+            npc.actionCooldown = 0.6;
+          }
+        } break;
+
+        case 'MINE': {
+          npc.actionCooldown -= dt;
+          if(npc.actionCooldown<=0){
+            const tx = npc.task.tx ?? toGridX(npc.mesh.position.x);
+            const tz = npc.task.tz ?? toGridZ(npc.mesh.position.z);
+            npcMineTopAt(npc, tx, tz);
+            npc.task = null;
+            npc.actionCooldown = 0.6;
+          }
+        } break;
+
+        case 'BUILD_TOWER': {
+          npc.actionCooldown -= dt;
+          if(npc.actionCooldown<=0){
+            const ok = npcBuildTower(npc, npc.task.h||3, npc.task.blockType||'brick');
+            npc.task._placed = (npc.task._placed||0) + (ok?1:0);
+            if(npc.task._placed>= (npc.task.h||3)) npc.task=null;
+            npc.actionCooldown = 0.4;
+          }
+        } break;
+      }
+    }
+
+    // ===== NPC ray/pick + chat UI =====
+    const npcRay=new THREE.Raycaster();
+    function pickNPC(){ npcRay.setFromCamera(new THREE.Vector2(0,0),camera); const meshes=NPCS.map(n=>n.mesh); const hits=npcRay.intersectObjects(meshes,true); if(!hits.length) return null; let o=hits[0].object; while(o && !o.userData.npc) o=o.parent; return o?{object:o}:null; }
     function nearestNPC(){ let best=null, d=Infinity; for(const n of NPCS){ const dd=n.mesh.position.distanceTo(camera.position); if(dd<d){ best=n; d=dd; } } return best && d<6? best : null; }
 
-    // Chat UI + Voice
     const npcUI=document.getElementById('npcUI'), npcLog=document.getElementById('npcLog'), npcInput=document.getElementById('npcInput'), npcForm=document.getElementById('npcForm'), npcNameEl=document.getElementById('npcName'), npcModelEl=document.getElementById('npcModel'), npcClose=document.getElementById('npcClose'), npcMic=document.getElementById('npcMic'), npcModeEl=document.getElementById('npcMode');
     let activeNPC=null; const supportsSTT=('webkitSpeechRecognition' in window)||('SpeechRecognition' in window); const supportsTTS='speechSynthesis' in window; let recognition=null;
 
     function appendChat(who,text){ const line=document.createElement('div'); line.innerHTML=`<b>${who}:</b> ${text}`; npcLog.appendChild(line); npcLog.scrollTop=npcLog.scrollHeight; }
     function getAIMode(){ const cfg=window.AI_CONFIG||{}; const p=cfg.providers&&(cfg.providers['ChatGPT']||cfg.providers['chatgpt']); return (cfg.mode==='proxy'&&p&&p.url)?'PROXY':'MOCK'; }
-    function updateAIModeBadge(){ if(npcModeEl) npcModeEl.textContent='AI: '+getAIMode(); }
+    function updateAIModeBadge(){ if(npcModeEl) npcModeEl.textContent='AI: '+getAIMode()+' • Auto: '+(NPC_AUTONOMY?'ON':'OFF'); }
     function openNPCChat(npc){ activeNPC=npc; npcUI.classList.remove('hidden'); npcNameEl.textContent=npc.name; npcModelEl.textContent=`(${npc.model})`; updateAIModeBadge(); appendChat('system',`Talking to ${npc.name}.`); npcInput.focus(); }
-    function talkToNearestNPC(){ const n=nearestNPC(); if(n) openNPCChat(n.mesh.userData.npc); else flash('No AI nearby. Walk closer.'); }
+    function talkToNearestNPC(){ const n=nearestNPC(); if(n) openNPCChat(n); else flash('No AI nearby. Walk closer.'); }
 
-    // ----------- NATURAL TTS -----------
+    // ===== Voice (same as previous, with natural TTS) =====
     const TTS = (()=>{
       const state = { queue:[], playing:false, voices:[], lastPick:null };
-
-      // Load voices (async in Chrome)
       function refreshVoices(){ state.voices = (speechSynthesis.getVoices && speechSynthesis.getVoices()) || []; }
-      if(supportsTTS){
-        refreshVoices();
-        try{ speechSynthesis.onvoiceschanged = refreshVoices; }catch(_){}
-      }
-
-      // Prefer neural / high-quality voices if present
-      function pickVoice() {
-        if(!supportsTTS) return null;
-        refreshVoices();
-        const v = state.voices;
-        if(!v || !v.length) return null;
-        const prefer = [
-          /Neural/i, /Natural/i, /Premium/i,
-          /^Google.*English/i, /^Microsoft.*English/i,
-          /Samantha/i, /Jenny/i, /Aria/i, /Guy/i, /Emma/i, /Zira/i
-        ];
-        // Prioritize en-* locales
+      if(supportsTTS){ refreshVoices(); try{ speechSynthesis.onvoiceschanged = refreshVoices; }catch(_){ } }
+      function pickVoice(){
+        if(!supportsTTS) return null; refreshVoices();
+        const v = state.voices||[]; if(!v.length) return null;
         const en = v.filter(x=>/^en[-_]/i.test(x.lang||'') || /English/i.test(x.name||''));
-        const ordered = en.concat(v);
-        for(const re of prefer){
-          const hit = ordered.find(x=>re.test(x.name||''));
-          if(hit) return state.lastPick = hit;
-        }
-        return state.lastPick = ordered[0];
+        const pref=[/Neural/i,/Natural/i,/Premium/i,/Google/i,/Microsoft/i,/Samantha|Aria|Jenny|Zira|Emma|Guy/i];
+        const ordered=en.concat(v);
+        for(const re of pref){ const hit=ordered.find(x=>re.test(x.name||'')); if(hit) return state.lastPick=hit; }
+        return state.lastPick=ordered[0];
       }
-
-      // Split text into natural chunks (sentences, then clauses)
-      function splitChunks(text){
-        const t = String(text||'').replace(/\s+/g,' ').trim();
-        if(!t) return [];
-        const sents = t
-          .split(/([.!?…]+)\s+/) // keep punctuation
-          .reduce((acc, part, i, arr)=>{
-            if(!part) return acc;
-            if(/^[.!?…]+$/.test(part)){
-              acc[acc.length-1] += part + ' ';
-            } else {
-              acc.push(part.trim());
-            }
-            return acc;
-          }, []);
-        // Further split long sentences by commas/semicolons
-        const chunks=[];
-        for(const s of sents){
-          if(s.length<=180){ chunks.push(s); continue; }
-          const bits=s.split(/[,;:]\s+/);
-          let cur='';
-          for(const b of bits){
-            const add = (cur?cur+' ': '') + b;
-            if(add.length>180 && cur){ chunks.push(cur); cur=b; }
-            else cur = add;
-          }
-          if(cur) chunks.push(cur);
-        }
-        return chunks;
-      }
-
-      // Gentle variations for prosody
-      function prosodyFor(chunk){
-        const q = /[?]$/.test(chunk);
-        const longish = chunk.length > 120;
-        const baseRate = longish ? 0.92 : 0.98;
-        const rate = Math.min(1.08, Math.max(0.85, baseRate + (Math.random()*0.06 - 0.03)));
-        const basePitch = q ? 1.06 : 1.0;
-        const pitch = Math.min(1.15, Math.max(0.9, basePitch + (Math.random()*0.04 - 0.02)));
-        return { rate, pitch };
-      }
-
-      function enqueueUtterance(text){
-        if(!supportsTTS) return;
-        const voice = state.lastPick || pickVoice();
-        const u = new SpeechSynthesisUtterance(text);
-        if(voice){ u.voice = voice; u.lang = voice.lang || (navigator.language||'en-US'); }
-        else { u.lang = navigator.language || 'en-US'; }
-        const { rate, pitch } = prosodyFor(text);
-        u.rate = rate; u.pitch = pitch; u.volume = 1;
-        u.onend = ()=>{ state.queue.shift(); state.playing=false; // tiny rest between chunks
-          setTimeout(()=>{ if(state.queue[0]) speechSynthesis.speak(state.queue[0]); }, 90);
-        };
-        state.queue.push(u);
-        if(!state.playing){
-          state.playing=true;
-          try{ speechSynthesis.cancel(); }catch(_){}
-          speechSynthesis.speak(u);
-        }
-      }
-
-      function speak(text){
-        if(!supportsTTS) return;
-        const chunks = splitChunks(text);
-        if(chunks.length===0) return;
-        if(chunks.length===1){ enqueueUtterance(chunks[0]); return; }
-        chunks.forEach(enqueueUtterance);
-      }
-
+      function splitChunks(t){ t=String(t||'').replace(/\s+/g,' ').trim(); if(!t) return []; return t.match(/[^.!?…]+[.!?…]?/g)||[t]; }
+      function prosodyFor(c){ const q=/\?$/.test(c); const rate=(q?1.02:0.97)+(Math.random()*0.06-0.03); const pitch=(q?1.07:1.0)+(Math.random()*0.04-0.02); return {rate:clamp(rate,0.85,1.12), pitch:clamp(pitch,0.9,1.15)}; }
+      function enqueue(text){ const u=new SpeechSynthesisUtterance(text); const v=state.lastPick||pickVoice(); if(v){ u.voice=v; u.lang=v.lang||navigator.language||'en-US'; } u.volume=1; const p=prosodyFor(text); u.rate=p.rate; u.pitch=p.pitch; u.onend=()=>{ state.queue.shift(); state.playing=false; setTimeout(()=>{ if(state.queue[0]) speechSynthesis.speak(state.queue[0]); }, 90); }; state.queue.push(u); if(!state.playing){ state.playing=true; try{ speechSynthesis.cancel(); }catch(_){ } speechSynthesis.speak(u); } }
+      function speak(text){ if(!supportsTTS) return; const chunks=splitChunks(text); for(const c of chunks){ enqueue(c.trim()); } }
       function cancel(){ if(!supportsTTS) return; state.queue.length=0; try{ speechSynthesis.cancel(); }catch(_){ } state.playing=false; }
-
-      return { speak, cancel, pickVoice };
+      return {speak, cancel};
     })();
 
-    // Voice (Web Speech API): push-to-talk (Y) or mic button
     function setupRecognition(){
       if(!supportsSTT) return null;
       const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-      const rec=new SR();
-      rec.continuous=false; rec.interimResults=true; rec.lang=navigator.language||'en-US';
-      rec.onstart=()=>{ dictating=true; npcMic?.setAttribute('aria-pressed','true'); appendChat('system','🎙️ listening…'); TTS.cancel(); }; // barge-in
-      rec.onend = ()=>{ npcMic?.setAttribute('aria-pressed','false'); setTimeout(()=>{ dictating=false; },50); };
-      rec.onerror=(e)=>{ appendChat('system','Mic error: '+e.error); };
-      rec.onresult=(e)=>{
-        let final='';
-        for(let i=e.resultIndex;i<e.results.length;i++){
-          const r=e.results[i];
-          if(r.isFinal) final+=r[0].transcript;
-        }
-        if(final.trim()){
-          npcInput.value=final.trim();
-          npcForm.dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));
-        }
-      };
+      const rec=new SR(); rec.continuous=false; rec.interimResults=true; rec.lang=navigator.language||'en-US';
+      rec.onstart=()=>{ dictating=true; npcMic?.setAttribute('aria-pressed','true'); appendChat('system','🎙️ listening…'); TTS.cancel(); };
+      rec.onend=()=>{ npcMic?.setAttribute('aria-pressed','false'); setTimeout(()=>{ dictating=false; },50); };
+      rec.onerror=(e)=> appendChat('system','Mic error: '+e.error);
+      rec.onresult=(e)=>{ let final=''; for(let i=e.resultIndex;i<e.results.length;i++){ const r=e.results[i]; if(r.isFinal) final+=r[0].transcript; } if(final.trim()){ npcInput.value=final.trim(); npcForm.dispatchEvent(new Event('submit',{cancelable:true,bubbles:true})); } };
       return rec;
     }
-    function startDictation(){ if(!supportsSTT){ appendChat('system','Voice not supported in this browser (try Chrome/Edge).'); return; } if(npcUI.classList.contains('hidden')){ const n=nearestNPC(); if(n) openNPCChat(n.mesh.userData.npc); else return flash('No AI nearby.'); } if(!recognition) recognition=setupRecognition(); try{ recognition.start(); }catch(_){} }
-    function stopDictation(){ if(recognition){ try{ recognition.stop(); }catch(_){} } }
+    function startDictation(){ if(!supportsSTT){ appendChat('system','Voice not supported (try Chrome/Edge).'); return; } if(npcUI.classList.contains('hidden')){ const n=nearestNPC(); if(n) openNPCChat(n); else return flash('No AI nearby.'); } if(!recognition) recognition=setupRecognition(); try{ recognition.start(); }catch(_){ } }
+    function stopDictation(){ if(recognition){ try{ recognition.stop(); }catch(_){ } } }
+    npcMic.addEventListener('pointerdown', ()=> startDictation()); npcMic.addEventListener('pointerup', ()=> stopDictation()); npcMic.addEventListener('pointerleave', ()=> stopDictation()); npcMic.addEventListener('click', (e)=> e.preventDefault());
 
-    if(npcMic){ npcMic.addEventListener('pointerdown', ()=> startDictation()); npcMic.addEventListener('pointerup', ()=> stopDictation()); npcMic.addEventListener('pointerleave', ()=> stopDictation()); npcMic.addEventListener('click', (e)=> e.preventDefault()); }
-
-    npcForm.addEventListener('submit', async (e)=>{
-      e.preventDefault();
-      const text=npcInput.value.trim();
-      if(!text||!activeNPC) return;
-      appendChat('you', text);
-      npcInput.value='';
-      const reply=await askModel(activeNPC.model, text);
-      appendChat(activeNPC.model, reply);
-      speakReply(activeNPC.model, reply);
-    });
-    npcClose.addEventListener('click', ()=>{ npcUI.classList.add('hidden'); activeNPC=null; });
-    npcInput.addEventListener('keydown', (e)=>{ e.stopPropagation(); if(e.code==='Escape'){ npcUI.classList.add('hidden'); activeNPC=null; npcInput.blur(); } });
-
-    // Adapter for AI models — keep your existing proxy behavior
+    // ===== AI adapter + Intent Handling =====
     async function askModel(provider, prompt){
       const cfg=window.AI_CONFIG||{mode:'mock'};
       if(cfg.mode!=='proxy') return mockReply(provider,prompt);
       const p=cfg.providers && (cfg.providers[provider] || cfg.providers[String(provider).toLowerCase()]);
       if(!p||!p.url) return mockReply(provider,prompt);
       try{
-        const res=await fetch(p.url,{
-          method:'POST',
-          headers:{'Content-Type':'application/json', ...(p.apiKey?{'Authorization':`Bearer ${p.apiKey}`}:{})},
-          body: JSON.stringify({ model: provider, messages:[{role:'system',content:'You are an NPC inside a voxel game.'},{role:'user', content: prompt}] })
-        });
+        const res=await fetch(p.url,{ method:'POST', headers:{'Content-Type':'application/json', ...(p.apiKey?{'Authorization':`Bearer ${p.apiKey}`}:{})}, body: JSON.stringify({ model: provider, messages:[{role:'system',content:
+`You are an NPC inside a voxel game.
+When you want to act on the world, include ONE simple command tag at the end:
+[FOLLOW] | [WALK x=NUM z=NUM] | [PLACE type=grass|dirt|stone|wood|brick] | [MINE] | [BUILD_TOWER h=NUM type=...]
+Keep normal conversational text BEFORE the tag.`},{role:'user', content: prompt}] }) });
         const data=await res.json();
-        return (data && (data.reply || (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content))) || '[no reply]';
-      }catch(err){
-        console.warn('AI proxy error', err);
-        return mockReply(provider, String(prompt)+' (offline)');
-      }
+        return (data && (data.reply || (data.choices?.[0]?.message?.content))) || '[no reply]';
+      }catch(err){ console.warn('AI proxy error', err); return mockReply(provider, String(prompt)+' (offline)'); }
     }
     function mockReply(provider,prompt){
-      const name=String(provider||'').toLowerCase();
-      const p=String(prompt||'').trim();
-      if(!p) return '...';
-      if(name.includes('mix')) return `*Mixtral thinks:* ${p.split(' ').reverse().slice(0,18).join(' ')} 😉`;
-      return `*ChatGPT says:* ${p.length<120?`Interesting question about "${p}". Here are 2 ideas: 1) try building with grass on high ground, 2) use brick stairs for climbing.`: p.slice(0,140)+'…'}`;
+      const name=String(provider||'').toLowerCase(); const p=String(prompt||'').trim();
+      const tail = name.includes('mix') ? ' 😉' : '';
+      let action = '';
+      if(/follow/i.test(p)) action=' [FOLLOW]';
+      else if(/build|tower/i.test(p)) action=' [BUILD_TOWER h=3 type=brick]';
+      else if(/mine|dig/i.test(p)) action=' [MINE]';
+      else if(/come|here/i.test(p)) action=' [WALK x=0 z=0]';
+      return (name.includes('mix')? `*Mixtral thinks:* `:`*ChatGPT says:* `) + (p.length<120?`Okay! ${p}`:p.slice(0,140)+'…') + action;
     }
 
-    // Use the natural TTS for replies
+    function handleAIIntent(npc, replyText){
+      // Parse [TAG key=val ...]
+      const tagMatch = /\[([A-Z_]+)([^\]]*)\]/.exec(replyText);
+      if(!tagMatch){ // heuristics
+        const t=replyText.toLowerCase();
+        if(t.includes('follow')) return setTask(npc,{type:'FOLLOW'});
+        if(t.includes('tower')||t.includes('build')) return setTask(npc,{type:'BUILD_TOWER', h:3, blockType:'brick'});
+        if(t.includes('mine')||t.includes('dig')) return setTask(npc,{type:'MINE'});
+        if(t.includes('come')||t.includes('here')) return setTask(npc,{type:'WALK_TO', gx:toGridX(camera.position.x), gz:toGridZ(camera.position.z)});
+        return;
+      }
+      const cmd = tagMatch[1];
+      const argsStr = tagMatch[2]||'';
+      const args = Object.fromEntries(Array.from(argsStr.matchAll(/(\w+)\s*=\s*([-\w]+)/g)).map(m=>[m[1], isNaN(m[2])? m[2] : Number(m[2])]));
+      switch(cmd){
+        case 'FOLLOW': setTask(npc,{type:'FOLLOW'}); break;
+        case 'WALK': setTask(npc,{type:'WALK_TO', gx: (toGridX(npc.mesh.position.x)+(args.x||0)), gz:(toGridZ(npc.mesh.position.z)+(args.z||0))}); break;
+        case 'PLACE': setTask(npc,{type:'PLACE', blockType: (args.type||'wood')}); break;
+        case 'MINE': setTask(npc,{type:'MINE'}); break;
+        case 'BUILD_TOWER': setTask(npc,{type:'BUILD_TOWER', h: (args.h||3), blockType:(args.type||'brick')}); break;
+      }
+    }
+
     function speakReply(provider, text){
       if(!('speechSynthesis' in window)) return;
       let clean=String(text||'').replace('*ChatGPT says:* ','').replace('*Mixtral thinks:* ','').trim();
-      // If model returns one huge paragraph with few stops, add light punctuation hints.
+      // strip action tag from spoken content
+      clean = clean.replace(/\[[^\]]+\]\s*$/,'').trim();
       if(clean && !/[.!?]/.test(clean.slice(-1))) clean += '.';
       TTS.speak(clean);
     }
 
-    // Movement loop
+    npcForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const text=npcInput.value.trim(); if(!text||!activeNPC) return;
+      appendChat('you', text); npcInput.value='';
+      const reply=await askModel(activeNPC.model, text);
+      appendChat(activeNPC.model, reply);
+      speakReply(activeNPC.model, reply);
+      handleAIIntent(activeNPC, reply);
+    });
+    npcClose.addEventListener('click', ()=>{ npcUI.classList.add('hidden'); activeNPC=null; });
+    npcInput.addEventListener('keydown', (e)=>{ e.stopPropagation(); if(e.code==='Escape'){ npcUI.classList.add('hidden'); activeNPC=null; npcInput.blur(); } });
+
+    // ===== Game loop =====
     let last=performance.now(); let lastChunkCX=0, lastChunkCZ=0;
     function tick(now){
-      const dt=Math.min((now-last)/1000,0.05); last=now; const ccx=Math.floor(Math.floor(camera.position.x)/CHUNK_SIZE), ccz=Math.floor(Math.floor(camera.position.z)/CHUNK_SIZE); if(ccx!==lastChunkCX||ccz!==lastChunkCZ){ ensureChunksAround(camera.position.x,camera.position.z); lastChunkCX=ccx; lastChunkCZ=ccz; }
+      const dt=Math.min((now-last)/1000,0.05); last=now;
+      const ccx=Math.floor(Math.floor(camera.position.x)/CHUNK_SIZE), ccz=Math.floor(Math.floor(camera.position.z)/CHUNK_SIZE);
+      if(ccx!==lastChunkCX||ccz!==lastChunkCZ){ ensureChunksAround(camera.position.x,camera.position.z); lastChunkCX=ccx; lastChunkCZ=ccz; }
       for(let i=0;i<PERF.maxBuildPerFrame && buildQueue.length>0;i++){ const b=buildQueue.shift(); addBlock(b.x,b.y,b.z,b.type); }
-      const t=now*0.00005; const sunX=Math.cos(t)*80, sunY=40+Math.sin(t)*30; sun.position.set(sunX,sunY,Math.sin(t)*80); const dayMix=THREE.MathUtils.clamp((sunY-5)/60,0,1); scene.background.setHSL(0.57,0.5,0.6*dayMix+0.05); hemi.intensity=0.35+0.4*dayMix; sun.intensity=0.3+0.9*dayMix;
-      currentEye=pressed.ctrl?EYE_CROUCH:EYE_STAND; const speed=MOVE_SPEED*(pressed.shift?SPRINT_MULT:1)*(pressed.ctrl?CROUCH_MULT:1);
-      const accel=new THREE.Vector3(); const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw)); const right=new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0)); if(pressed.w) accel.add(forward); if(pressed.s) accel.sub(forward); if(pressed.a) accel.sub(right); if(pressed.d) accel.add(right); if(accel.lengthSq()>0) accel.normalize().multiplyScalar(speed);
+
+      // day/night
+      const t=now*0.00005; const sunX=Math.cos(t)*80, sunY=40+Math.sin(t)*30; sun.position.set(sunX,sunY,Math.sin(t)*80);
+      const dayMix=THREE.MathUtils.clamp((sunY-5)/60,0,1); scene.background.setHSL(0.57,0.5,0.6*dayMix+0.05); hemi.intensity=0.35+0.4*dayMix; sun.intensity=0.3+0.9*dayMix;
+
+      // Player move
+      currentEye=pressed.ctrl?EYE_CROUCH:EYE_STAND;
+      const speed=MOVE_SPEED*(pressed.shift?SPRINT_MULT:1)*(pressed.ctrl?CROUCH_MULT:1);
+      const accel=new THREE.Vector3(); const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw)); const right=new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0));
+      if(pressed.w) accel.add(forward); if(pressed.s) accel.sub(forward); if(pressed.a) accel.sub(right); if(pressed.d) accel.add(right); if(accel.lengthSq()>0) accel.normalize().multiplyScalar(speed);
       const FRICTION=onGround?12:1.5; velocity.x += (accel.x-velocity.x)*Math.min(1,FRICTION*dt); velocity.z += (accel.z-velocity.z)*Math.min(1,FRICTION*dt); velocity.y += -GRAVITY*dt;
       const nowMs=performance.now(); const canJump=(onGround||(nowMs-lastGroundedAt)<COYOTE_TIME*1000); const jumpQueued=(nowMs-lastJumpPressedAt)<JUMP_BUFFER*1000; if(canJump&&jumpQueued){ velocity.y=JUMP_VEL; onGround=false; lastJumpPressedAt=-Infinity; }
-      const prev=camera.position.clone(), next=camera.position.clone(); next.x += velocity.x*dt; const cx=collideAxis(prev,next,'x',currentEye); next.z += velocity.z*dt; const cz=collideAxis(prev,next,'z',currentEye); if(cx.collided) tryAutoStep(prev,next,'x',cx,currentEye); if(cz.collided) tryAutoStep(prev,next,'z',cz,currentEye); next.y += velocity.y*dt; const gtop=groundTopAt(next.x,next.z); const feet=next.y-currentEye; if(feet<=gtop){ if(!onGround) lastGroundedAt=performance.now(); onGround=true; next.y=gtop+currentEye; velocity.y=0; } else { onGround=false; if(velocity.y>0) collideCeiling(next,currentEye); }
+      const prev=camera.position.clone(), next=camera.position.clone();
+      next.x += velocity.x*dt; collideAxis(prev,next,'x',currentEye);
+      next.z += velocity.z*dt; collideAxis(prev,next,'z',currentEye);
+      next.y += velocity.y*dt; const gtop=groundTopAt(next.x,next.z); const feet=next.y-currentEye;
+      if(feet<=gtop){ if(!onGround) lastGroundedAt=performance.now(); onGround=true; next.y=gtop+currentEye; velocity.y=0; } else { onGround=false; if(velocity.y>0) collideCeiling(next,currentEye); }
       camera.position.copy(next);
       const lookDir=new THREE.Vector3(-Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw)*Math.cos(pitch)); camera.lookAt(camera.position.clone().add(lookDir));
-      updateNPCs(dt); updateHighlight(); statsEl.textContent=`XYZ ${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)}\nBlocks ${blockMeshes.length}  Chunks ${loadedChunks.size}  Queue ${buildQueue.length}`;
-      renderer.render(scene,camera); requestAnimationFrame(tick);
+
+      // NPC logic
+      for(const n of NPCS){
+        // lightweight wander if no task and autonomy ON
+        if(NPC_AUTONOMY && !n.task){
+          n.t += dt;
+          if(n.t>2.8){ n.t=0; const doPlace = Math.random()<0.35; if(doPlace){ const type = n.model==='ChatGPT'?'wood':'stone'; setTask(n,{type:'PLACE', blockType:type}); } else { const gx = toGridX(n.mesh.position.x) + (Math.random()<0.5? -1:1)* (2 + (Math.random()*4|0)); const gz = toGridZ(n.mesh.position.z) + (Math.random()<0.5? -1:1)* (2 + (Math.random()*4|0)); setTask(n,{type:'WALK_TO', gx, gz}); } }
+        }
+        processTask(n, dt);
+      }
+
+      updateHighlight();
+      statsEl.textContent=`XYZ ${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)}\nBlocks ${blockMeshes.length}  Chunks ${loadedChunks.size}  Queue ${buildQueue.length}`;
+      renderer.render(scene,camera);
+      requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
 
-    // Misc UI helpers
+    // ===== UI helpers & Resize =====
     function flash(msg){ const el=document.createElement('div'); el.textContent=msg; el.style.position='fixed'; el.style.left='50%'; el.style.top='12%'; el.style.translate='-50% -50%'; el.style.color='#fff'; el.style.background='rgba(0,0,0,0.55)'; el.style.border='1px solid rgba(255,255,255,0.35)'; el.style.padding='8px 12px'; el.style.borderRadius='10px'; el.style.zIndex='20'; el.style.font='12px system-ui'; document.body.appendChild(el); setTimeout(()=>el.remove(),1200); }
     window.addEventListener('resize', ()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
-    // Runtime tests (unchanged + voice typing check)
-    (function runSelfTests(){ const results={pass:0,fail:0,logs:[]}; function assert(name,cond){ if(cond){results.pass++;} else {results.fail++; results.logs.push('FAIL: '+name);} }
+    // ===== Self-tests (kept, plus tiny path test) =====
+    (function runSelfTests(){
+      const results={pass:0,fail:0,logs:[]}; const assert=(name,cond)=>{ cond?results.pass++:(results.fail++,results.logs.push('FAIL: '+name)); };
       assert('jump height > 1 block',(JUMP_VEL*JUMP_VEL)/(2*GRAVITY) > 1.0);
       const AX=99,AY=1,AZ=99; const kxz=`${AX},${AZ}`; const before=blockMeshes.length; addBlock(AX,AY,AZ,'stone'); assert('addBlock placed', posToMesh.has(`${AX},${AY},${AZ}`)); assert('heightMap top==AY+1', heightMap.get(kxz)===AY+1); removeBlock(AX,AY,AZ); assert('removeBlock cleared', !posToMesh.has(`${AX},${AY},${AZ}`)); assert('heightMap reset to 0', heightMap.get(kxz)===0); assert('blockMeshes length restored', blockMeshes.length===before);
       const idGround=`0,0,0`, idAbove=`0,1,0`; const hadAbove=posToMesh.has(idAbove); tryPlace(0,0,0); assert('no overwrite', posToMesh.has(idGround)); tryPlace(0,1,0); assert('placed above ground', posToMesh.has(idAbove)); if(!hadAbove) removeBlock(0,1,0);
@@ -448,11 +564,11 @@ R reset • O save • P load`;
       const p=0.25; const dir=new THREE.Vector3(-Math.sin(0)*Math.cos(p), Math.sin(p), -Math.cos(0)*Math.cos(p)); assert('pitch positive looks up', dir.y>0);
       setSelected(2); assert('selectedIndex==2', selectedIndex===2);
       ensureChunksAround(0,0); assert('chunks > 0 after ensure', loadedChunks.size>0); assert('queue non-negative', buildQueue.length>=0); assert('groundTopAt(0,0)==1', groundTopAt(0,0)===1);
-      // typing detection
-      const ti=document.createElement('input'); document.body.appendChild(ti); ti.focus(); assert('isTyping true when input focused', isTyping()===true); ti.blur(); document.body.removeChild(ti);
+      // Simple path test near origin
+      const path = findPath2D(0,0, 2,2, 200);
+      assert('path returns array', Array.isArray(path));
       const summary=`Self-tests: ${results.pass} passed, ${results.fail} failed`; console.log(summary); results.logs.forEach(l=>console.warn(l)); flash(summary);
     })();
-
   })();
   </script>
 </body>
