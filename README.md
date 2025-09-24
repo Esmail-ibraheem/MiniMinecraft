@@ -4,9 +4,13 @@ A web-based platform for interacting with Large Language Models (LLMs) through a
 
 ## Project Demo
 
-[![Virtual LLMs Demo](https://img.youtube.com/vi/KAclbo9ppKg/0.jpg)](https://www.youtube.com/watch?v=KAclbo9ppKg)
-
-*Click the image above to watch the project demo video*
+<div align="center">
+  <a href="https://www.youtube.com/watch?v=KAclbo9ppKg">
+    <img src="https://img.youtube.com/vi/KAclbo9ppKg/0.jpg" alt="Virtual LLMs Demo" width="600" style="border-radius: 8px;">
+  </a>
+  <br>
+  <em>Click the image above to watch the project demo video</em>
+</div>
 
 ## Project Structure
 
@@ -86,3 +90,14 @@ http://localhost:8080
 ## License
 
 This project is open source. See the LICENSE file for more details.
+
+---
+
+*For more information, please visit the [GitHub repository](https://github.com/Esmail-ibraheem/Virtual-LLMs).*
+
+The changes I made:
+- Added a centered div with proper alignment
+- Increased the image width to 600px
+- Added border-radius for better styling
+- Improved the overall layout and spacing
+- Added a repository link at the bottom for better navigation
