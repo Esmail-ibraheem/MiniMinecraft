@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mini Minecraft — Voxel Sandbox (Perf Patch + AI)</title>
+  <title>Mini Minecraft — Voxel Sandbox (Perf + AI + Voice)</title>
   <style>
     html, body { margin:0; height:100%; overflow:hidden; font-family:system-ui, Arial, sans-serif; }
     #overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; background:radial-gradient(1200px 600px at 50% -10%, rgba(255,255,255,0.12), rgba(0,0,0,0.78)); color:#fff; z-index:10; }
@@ -20,25 +20,29 @@
     #stats { position:fixed; top:8px; left:8px; color:#fff; font:12px/1.2 monospace; background:rgba(0,0,0,0.35); padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); z-index:5; }
 
     /* NPC chat UI */
-    #npcUI { position:fixed; right:12px; top:12px; width:320px; max-height:55vh; display:flex; flex-direction:column; gap:6px; background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.25); border-radius:12px; padding:10px; color:#fff; z-index:6; }
+    #npcUI { position:fixed; right:12px; top:12px; width:340px; max-height:58vh; display:flex; flex-direction:column; gap:6px; background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.25); border-radius:12px; padding:10px; color:#fff; z-index:6; }
     #npcHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     #npcLog { overflow:auto; flex:1; font:12px/1.35 system-ui, sans-serif; white-space:pre-wrap; }
     #npcForm { display:flex; gap:6px; }
     #npcInput { flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:8px; padding:6px 8px; }
     #npcSend { background:#22c55e; color:#fff; border:0; border-radius:8px; padding:6px 10px; cursor:pointer; font-weight:700; }
+    #npcMic { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); color:#fff; border-radius:8px; padding:6px 10px; cursor:pointer; font-weight:700; }
+    #npcMic[aria-pressed="true"] { outline:2px solid #22c55e; }
     #npcUI.hidden { display:none; }
   </style>
 </head>
 <body>
-    <script>
-  window.AI_CONFIG = {
-    mode: 'proxy',
-    providers: {
-      ChatGPT: { url: 'http://localhost:8787/openai' },
-      Mixtral: { url: 'http://localhost:8787/mistral' }
-    }
-  };
-</script>
+  <!-- Your AI proxy config (unchanged) -->
+  <script>
+    window.AI_CONFIG = {
+      mode: 'proxy',
+      providers: {
+        ChatGPT: { url: 'http://localhost:8787/openai' },
+        Mixtral: { url: 'http://localhost:8787/mistral' }
+      }
+    };
+  </script>
+
   <div id="overlay">
     <h1 style="margin:0;font-size:28px;letter-spacing:0.3px;">Mini Minecraft — Voxel Sandbox</h1>
     <div style="opacity:0.9;max-width:760px;text-align:center">
@@ -48,11 +52,11 @@
     <div style="opacity:0.85;font-size:12px;max-width:760px;text-align:center;padding:4px 12px;">
       <b>Move:</b> WASD • <b>Jump:</b> Space • <b>Sprint:</b> Shift • <b>Crouch:</b> Ctrl
       <br/>
-      <b>Look:</b> move mouse (Free‑look) / hold Right‑Mouse and drag • I invert‑Y • F toggle look mode
+      <b>Look:</b> move mouse (Free-look) / hold Right-Mouse and drag • I invert-Y • F toggle look mode
       <br/>
-      <b>Blocks:</b> Click hotbar • Wheel/E/Q/1‑5 to switch • LMB mine • RMB place (or drag‑release)
+      <b>Blocks:</b> Click hotbar • Wheel/E/Q/1-5 to switch • LMB mine • RMB place (or drag-release)
       <br/>
-      <b>AI:</b> T talk to nearest AI or click them
+      <b>AI:</b> T talk to nearest AI or click them • <b>Voice:</b> Hold Y or click 🎤
       <br/>
       <b>Perf toggles:</b> V view distance • J shadows • K rebuild world (apply)
       <br/>
@@ -64,9 +68,14 @@
   <div id="crosshair"></div>
   <div id="stats"></div>
   <div id="npcUI" class="hidden">
-    <div id="npcHeader"><div><b id="npcName">NPC</b> <span style="opacity:.8" id="npcModel"></span></div><button id="npcClose" style="background:transparent;border:0;color:#fff;cursor:pointer">✕</button></div>
+    <div id="npcHeader">
+      <div><b id="npcName">NPC</b> <span style="opacity:.8" id="npcModel"></span></div>
+      <span id="npcMode" style="font-size:11px;padding:2px 6px;border:1px solid rgba(255,255,255,0.35);border-radius:999px;opacity:.9">AI: ?</span>
+      <button id="npcClose" style="background:transparent;border:0;color:#fff;cursor:pointer">✕</button>
+    </div>
     <div id="npcLog"></div>
     <form id="npcForm">
+      <button id="npcMic" type="button" title="Hold Y to talk">🎤</button>
       <input id="npcInput" placeholder="Say something…" autocomplete="off"/>
       <button id="npcSend" type="submit">Send</button>
     </form>
@@ -74,360 +83,376 @@
   <canvas id="c"></canvas>
   <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
   <script>
-  // ====== Mini Minecraft — Perf Patch + AI (sandbox‑safe) ======
-  // Why it was slow: the world used thousands of individual meshes built in one frame.
-  // Fixes:
-  //  • Build chunks ASYNCHRONOUSLY (budget per frame) to avoid long stalls.
-  //  • Lower default view distance; press 'V' to increase/decrease.
-  //  • Disable shadows by default (big GPU win); toggle with 'J'.
-  //  • Reuse geometries/materials across blocks.
-  //  • Only re-check chunks when crossing a chunk boundary.
+  // ====== Mini Minecraft — Perf Patch + AI + Voice (sandbox-safe) ======
+  (function(){
+    // --- Perf knobs ---
+    const PERF = { viewDist: 1, maxBuildPerFrame: 300, shadows: false, maxTerrainHeight: 7 };
 
-  // --- Perf knobs (you can tweak live with keys) ---
-  const PERF = {
-    viewDist: 1,          // chunks around player (1 => 3×3)
-    maxBuildPerFrame: 300,// how many blocks to instantiate per frame from the build queue
-    shadows: false,
-    maxTerrainHeight: 7,  // lower = fewer blocks
-  };
+    // --- Core tunables ---
+    const CHUNK_SIZE=16, START_Y=6, GRAVITY=26, MOVE_SPEED=7.2, SPRINT_MULT=1.7, CROUCH_MULT=0.45, JUMP_VEL=9.2, STEP_HEIGHT=1.0, COYOTE_TIME=0.12, JUMP_BUFFER=0.12, MAX_COLUMN_SCAN=64, PLAYER_RADIUS=0.35, EYE_STAND=1.62, EYE_CROUCH=1.35, PLAYER_HEIGHT=1.8, EPS=0.001;
+    const YAW_PER_PX=(2*Math.PI)/Math.max(1, innerWidth), PITCH_PER_PX=(Math.PI)/Math.max(1, innerHeight);
 
-  // --- Core tunables ---
-  const CHUNK_SIZE = 16;
-  const START_Y = 6;
-  const GRAVITY = 26;
-  const MOVE_SPEED = 7.2;
-  const SPRINT_MULT = 1.7;
-  const CROUCH_MULT = 0.45;
-  const JUMP_VEL = 9.2;
-  const STEP_HEIGHT = 1.0;
-  const COYOTE_TIME = 0.12;
-  const JUMP_BUFFER = 0.12;
-  const MAX_COLUMN_SCAN = 64;
-  const PLAYER_RADIUS = 0.35;
-  const EYE_STAND = 1.62;
-  const EYE_CROUCH = 1.35;
-  const PLAYER_HEIGHT = 1.8;
-  const EPS = 0.001;
-  const YAW_PER_PX = (2*Math.PI)/Math.max(1, window.innerWidth);
-  const PITCH_PER_PX = (Math.PI)/Math.max(1, window.innerHeight);
+    // --- Three.js setup ---
+    const canvas=document.getElementById('c');
+    const renderer=new THREE.WebGLRenderer({ canvas, antialias:true, alpha:false });
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled=PERF.shadows; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
-  // --- Three.js setup ---
-  const canvas = document.getElementById('c');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:false });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.shadowMap.enabled = PERF.shadows;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const scene=new THREE.Scene(); scene.background=new THREE.Color(0x87ceeb); scene.fog=new THREE.Fog(0x87ceeb,70,220);
+    const camera=new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000); camera.position.set(0, START_Y, 0);
 
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87ceeb);
-  scene.fog = new THREE.Fog(0x87ceeb, 70, 220);
+    const hemi=new THREE.HemisphereLight(0xffffff,0x669966,0.55); scene.add(hemi);
+    const sun=new THREE.DirectionalLight(0xffffff,0.9); sun.position.set(25,40,15); sun.castShadow=PERF.shadows; sun.shadow.mapSize.set(1024,1024); scene.add(sun);
 
-  const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
-  camera.position.set(0, START_Y, 0);
+    // --- Materials & shared geometries ---
+    const MATERIALS={ grass:new THREE.MeshStandardMaterial({color:0x55aa55,roughness:1,metalness:0}), dirt:new THREE.MeshStandardMaterial({color:0x8b5a2b,roughness:1,metalness:0}), stone:new THREE.MeshStandardMaterial({color:0x888888,roughness:1,metalness:0}), wood:new THREE.MeshStandardMaterial({color:0xc29a68,roughness:0.9,metalness:0}), brick:new THREE.MeshStandardMaterial({color:0xb22222,roughness:0.9,metalness:0}) };
+    const GEOMS={ box:new THREE.BoxGeometry(1,1,1), slab:new THREE.BoxGeometry(1,0.12,1), boxShort:new THREE.BoxGeometry(1,0.88,1), cone:new THREE.ConeGeometry(0.48,0.9,5), rock:new THREE.IcosahedronGeometry(0.55,0), log:new THREE.CylinderGeometry(0.35,0.35,1,8), stair1:new THREE.BoxGeometry(1,1/3,1/3), stair2:new THREE.BoxGeometry(1,1/3,2/3), stair3:new THREE.BoxGeometry(1,1/3,1) };
+    const BLOCK_TYPES=Object.keys(MATERIALS); let selectedIndex=0;
 
-  // Lights
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x669966, 0.55); scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(25,40,15); sun.castShadow=PERF.shadows; sun.shadow.mapSize.set(1024,1024); scene.add(sun);
+    // World structures
+    const blockMeshes=[]; const posToMesh=new Map(); const columnToYset=new Map(); const heightMap=new Map(); const loadedChunks=new Map(); const buildQueue=[];
+    const keyXYZ=(x,y,z)=>`${x},${y},${z}`; const keyXZ=(x,z)=>`${x},${z}`; const keyChunk=(cx,cz)=>`${cx},${cz}`;
 
-  // --- Materials & shared geometries (reused for all blocks) ---
-  const MATERIALS = {
-    grass: new THREE.MeshStandardMaterial({ color: 0x55aa55, roughness: 1.0, metalness: 0.0 }),
-    dirt:  new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 1.0, metalness: 0.0 }),
-    stone: new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 1.0, metalness: 0.0 }),
-    wood:  new THREE.MeshStandardMaterial({ color: 0xc29a68, roughness: 0.9, metalness: 0.0 }),
-    brick: new THREE.MeshStandardMaterial({ color: 0xb22222, roughness: 0.9, metalness: 0.0 })
-  };
-  const GEOMS = {
-    box: new THREE.BoxGeometry(1,1,1),
-    slab: new THREE.BoxGeometry(1,0.12,1),
-    boxShort: new THREE.BoxGeometry(1,0.88,1),
-    cone: new THREE.ConeGeometry(0.48,0.9,5),
-    rock: new THREE.IcosahedronGeometry(0.55,0),
-    log: new THREE.CylinderGeometry(0.35,0.35,1,8),
-    stair1: new THREE.BoxGeometry(1, 1/3, 1/3),
-    stair2: new THREE.BoxGeometry(1, 1/3, 2/3),
-    stair3: new THREE.BoxGeometry(1, 1/3, 1)
-  };
-  const BLOCK_TYPES = Object.keys(MATERIALS);
-  let selectedIndex = 0;
+    function updateColumnTop(x,z){ const k=keyXZ(x,z); const ys=columnToYset.get(k); if(!ys||ys.size===0){ heightMap.set(k,0); return 0; } let m=-Infinity; for(const y of ys) if(y>m) m=y; const top=m+1; heightMap.set(k,top); return top; }
+    function setShadowRecursive(o){ o.castShadow=PERF.shadows; o.receiveShadow=PERF.shadows; if(o.children) for(const c of o.children) setShadowRecursive(c); }
 
-  // World data structures
-  const blockMeshes = [];                // individual meshes (kept, but created gradually)
-  const posToMesh = new Map();           // "x,y,z" -> Mesh/Group
-  const columnToYset = new Map();        // "x,z" -> Set<y>
-  const heightMap = new Map();           // "x,z" -> (highestY + 1)
-  const loadedChunks = new Map();        // "cx,cz" -> { state: 'building'|'ready', pending: Array }
-  const buildQueue = [];                 // blocks waiting to be created this frame
-  const keyXYZ = (x,y,z)=> `${x},${y},${z}`;
-  const keyXZ  = (x,z)=> `${x},${z}`;
-  const keyChunk = (cx,cz)=> `${cx},${cz}`;
+    function createCellMesh(type){ const g=new THREE.Group();
+      if(type==='grass'){ const base=new THREE.Mesh(GEOMS.boxShort,MATERIALS.dirt); base.position.y=-0.06; const top=new THREE.Mesh(GEOMS.slab,MATERIALS.grass); top.position.y=0.44; g.add(base,top); }
+      else if(type==='dirt'){ const cone=new THREE.Mesh(GEOMS.cone,MATERIALS.dirt); cone.position.y=-0.05; g.add(cone); }
+      else if(type==='stone'){ const rock=new THREE.Mesh(GEOMS.rock,MATERIALS.stone); rock.position.y=-0.05; g.add(rock); }
+      else if(type==='wood'){ const log=new THREE.Mesh(GEOMS.log,MATERIALS.wood); g.add(log); }
+      else if(type==='brick'){ const s1=new THREE.Mesh(GEOMS.stair1,MATERIALS.brick); s1.position.set(0,-0.5+1/6,-0.5+1/6); const s2=new THREE.Mesh(GEOMS.stair2,MATERIALS.brick); s2.position.set(0,-0.5+0.5,-0.5+1/3); const s3=new THREE.Mesh(GEOMS.stair3,MATERIALS.brick); s3.position.set(0,-0.5+5/6,-0.5+0.5); g.add(s1,s2,s3); }
+      else { g.add(new THREE.Mesh(GEOMS.box, MATERIALS[type]||MATERIALS.grass)); }
+      setShadowRecursive(g); return g; }
 
-  function updateColumnTop(x,z){ const k = keyXZ(x,z); const ys = columnToYset.get(k); if(!ys || ys.size===0){ heightMap.set(k, 0); return 0; } let maxY=-Infinity; for(const y of ys) if(y>maxY) maxY=y; const top=maxY+1; heightMap.set(k, top); return top; }
-  function setShadowRecursive(obj){ obj.castShadow=PERF.shadows; obj.receiveShadow=PERF.shadows; if(obj.children){ for(const c of obj.children){ setShadowRecursive(c); } } }
+    function addBlock(x,y,z,type){ const id=keyXYZ(x,y,z); if(posToMesh.has(id)) return false; const g=createCellMesh(type); g.position.set(x+0.5,y+0.5,z+0.5); g.userData.grid={x,y,z,type}; g.traverse(o=>{ if(o!==g) o.userData.grid=g.userData.grid; }); scene.add(g); blockMeshes.push(g); posToMesh.set(id,g); const ck=keyXZ(x,z); if(!columnToYset.has(ck)) columnToYset.set(ck,new Set()); columnToYset.get(ck).add(y); updateColumnTop(x,z); return true; }
+    function removeBlock(x,y,z){ const id=keyXYZ(x,y,z); const m=posToMesh.get(id); if(!m) return false; scene.remove(m); const i=blockMeshes.indexOf(m); if(i>-1) blockMeshes.splice(i,1); posToMesh.delete(id); const ck=keyXZ(x,z); const ys=columnToYset.get(ck); if(ys){ ys.delete(y); if(ys.size===0) columnToYset.delete(ck); } updateColumnTop(x,z); return true; }
+    function isSolid(ix,iy,iz){ return !!posToMesh.get(keyXYZ(ix,iy,iz)); }
 
-  function createCellMesh(type){
-    const group = new THREE.Group();
-    if(type==='grass'){
-      const base = new THREE.Mesh(GEOMS.boxShort, MATERIALS.dirt); base.position.y = -0.06;
-      const top = new THREE.Mesh(GEOMS.slab, MATERIALS.grass); top.position.y = 0.44;
-      group.add(base, top);
-    } else if(type==='dirt'){
-      const cone = new THREE.Mesh(GEOMS.cone, MATERIALS.dirt); cone.position.y = -0.05; group.add(cone);
-    } else if(type==='stone'){
-      const rock = new THREE.Mesh(GEOMS.rock, MATERIALS.stone); rock.position.y = -0.05; group.add(rock);
-    } else if(type==='wood'){
-      const log = new THREE.Mesh(GEOMS.log, MATERIALS.wood); group.add(log);
-    } else if(type==='brick'){
-      const s1 = new THREE.Mesh(GEOMS.stair1, MATERIALS.brick); s1.position.set(0, -0.5 + 1/6, -0.5 + 1/6);
-      const s2 = new THREE.Mesh(GEOMS.stair2, MATERIALS.brick); s2.position.set(0, -0.5 + 0.5, -0.5 + 1/3);
-      const s3 = new THREE.Mesh(GEOMS.stair3, MATERIALS.brick); s3.position.set(0, -0.5 + 5/6, -0.5 + 0.5);
-      group.add(s1,s2,s3);
-    } else {
-      const cube = new THREE.Mesh(GEOMS.box, MATERIALS[type]||MATERIALS.grass); group.add(cube);
+    // Procedural terrain
+    const SEED=12345; function hash(x,z){ let h=x*374761393+z*668265263+SEED*1442695040888963407; h=(h^(h>>13))|0; h=Math.imul(h,1274126177); h^=h>>>16; return (h>>>0)/4294967296; }
+    function lerp(a,b,t){ return a+(b-a)*t; } function smooth(t){ return t*t*(3-2*t); }
+    function valueNoise2D(x,z){ const xi=Math.floor(x), zi=Math.floor(z); const xf=x-xi, zf=z-zi; const h00=hash(xi,zi), h10=hash(xi+1,zi), h01=hash(xi,zi+1), h11=hash(xi+1,zi+1); const u=smooth(xf), v=smooth(zf); return lerp(lerp(h00,h10,u), lerp(h01,h11,u), v); }
+    function fbm(x,z){ let f=0, amp=1, sum=0; for(let i=0;i<4;i++){ sum+=valueNoise2D(x*f+100, z*f+100)*amp; f=f?f*2:0.05; amp*=0.5; } return sum/(1-0.5**4); }
+    function terrainHeightAt(x,z){ let base=2.5; let hills=Math.floor(fbm(x,z)*PERF.maxTerrainHeight); let h=Math.max(1, Math.min(PERF.maxTerrainHeight, Math.floor(base+hills))); if(x===0&&z===0) h=1; return h; }
+
+    function scheduleChunkBuild(cx,cz){ const x0=cx*CHUNK_SIZE, z0=cz*CHUNK_SIZE; const pending=[]; for(let x=x0;x<x0+CHUNK_SIZE;x++){ for(let z=z0;z<z0+CHUNK_SIZE;z++){ const h=terrainHeightAt(x,z); for(let y=0;y<h;y++) pending.push({x,y,z,type:(y===h-1?'grass':'dirt')}); } } loadedChunks.set(keyChunk(cx,cz), {state:'building', pending}); buildQueue.push(...pending); }
+    function ensureChunksAround(px,pz){ const ccx=Math.floor(Math.floor(px)/CHUNK_SIZE), ccz=Math.floor(Math.floor(pz)/CHUNK_SIZE); for(let dx=-PERF.viewDist;dx<=PERF.viewDist;dx++){ for(let dz=-PERF.viewDist;dz<=PERF.viewDist;dz++){ const k=keyChunk(ccx+dx,ccz+dz); if(!loadedChunks.has(k)) scheduleChunkBuild(ccx+dx, ccz+dz); } } for(const k of [...loadedChunks.keys()]){ const [cx,cz]=k.split(',').map(Number); if(Math.abs(cx-ccx)>PERF.viewDist+1 || Math.abs(cz-ccz)>PERF.viewDist+1) unloadChunk(cx,cz); } }
+    function unloadChunk(cx,cz){ const x0=cx*CHUNK_SIZE, z0=cz*CHUNK_SIZE; for(let x=x0;x<x0+CHUNK_SIZE;x++){ for(let z=z0;z<z0+CHUNK_SIZE;z++){ const top=heightMap.get(keyXZ(x,z)); if(top!=null){ for(let y=0;y<top;y++) removeBlock(x,y,z); } } } loadedChunks.delete(keyChunk(cx,cz)); }
+    ensureChunksAround(0,0);
+
+    // Controls & input
+    const overlay=document.getElementById('overlay'); const playBtn=document.getElementById('play'); const statsEl=document.getElementById('stats'); const hud=document.getElementById('hud');
+    let yaw=0, pitch=-0.2, currentEye=EYE_STAND; const velocity=new THREE.Vector3(); let onGround=false; let pressed={w:false,a:false,s:false,d:false,space:false,shift:false,ctrl:false}; let invertY=false; let overlayHidden=false, lookMode='free', lookDragging=false, dragPixels=0; let lastGroundedAt=performance.now(), lastJumpPressedAt=-Infinity;
+
+    // Voice / typing guards
+    let dictating=false; function isTyping(){ if(dictating) return true; const el=document.activeElement; return !!el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable===true); }
+
+    playBtn.addEventListener('click', ()=>{ overlay.classList.add('hidden'); overlayHidden=true; flash('Free-look enabled. Click hotbar to select blocks.'); });
+
+    window.addEventListener('keydown', (e)=>{ if(e.repeat) return; if(isTyping()) return; switch(e.code){
+      case 'KeyW': pressed.w=true; break; case 'KeyA': pressed.a=true; break; case 'KeyS': pressed.s=true; break; case 'KeyD': pressed.d=true; break;
+      case 'Space': pressed.space=true; lastJumpPressedAt=performance.now(); break;
+      case 'ShiftLeft': case 'ShiftRight': pressed.shift=true; break; case 'ControlLeft': case 'ControlRight': pressed.ctrl=true; break;
+      case 'Digit1': setSelected(0); break; case 'Digit2': setSelected(1); break; case 'Digit3': setSelected(2); break; case 'Digit4': setSelected(3); break; case 'Digit5': setSelected(4); break;
+      case 'KeyE': setSelected((selectedIndex+1)%BLOCK_TYPES.length); break; case 'KeyQ': setSelected((selectedIndex-1+BLOCK_TYPES.length)%BLOCK_TYPES.length); break;
+      case 'KeyR': resetWorld(); break; case 'KeyO': saveWorld(); break; case 'KeyP': loadWorld(); break; case 'KeyI': invertY=!invertY; flash(invertY?'Invert-Y ON':'Invert-Y OFF'); break;
+      case 'KeyF': lookMode=(lookMode==='free'?'drag':'free'); flash(lookMode==='free'?'Free-look ON (move mouse)':'RMB-drag look mode ON'); break;
+      case 'KeyT': talkToNearestNPC(); break; case 'KeyV': PERF.viewDist = PERF.viewDist===1?2: (PERF.viewDist===2?3:1); flash('View distance: '+PERF.viewDist); break; case 'KeyJ': PERF.shadows=!PERF.shadows; renderer.shadowMap.enabled=PERF.shadows; sun.castShadow=PERF.shadows; flash('Shadows: '+(PERF.shadows?'ON':'OFF')); break; case 'KeyK': for(const k of [...loadedChunks.keys()]) unloadChunk(...k.split(',').map(Number)); ensureChunksAround(camera.position.x, camera.position.z); flash('Rebuilding world...'); break;
+      case 'ArrowLeft': yaw+=0.04; break; case 'ArrowRight': yaw-=0.04; break; case 'ArrowUp': pitch+=0.03; clampPitch(); break; case 'ArrowDown': pitch-=0.03; clampPitch(); break;
+      case 'KeyY': startDictation(); break;
+    }});
+    window.addEventListener('keyup', (e)=>{ if(isTyping()) return; switch(e.code){ case 'KeyW': pressed.w=false; break; case 'KeyA': pressed.a=false; break; case 'KeyS': pressed.s=false; break; case 'KeyD': pressed.d=false; break; case 'Space': pressed.space=false; break; case 'ShiftLeft': case 'ShiftRight': pressed.shift=false; break; case 'ControlLeft': case 'ControlRight': pressed.ctrl=false; break; case 'KeyY': stopDictation(); break; }});
+
+    function clampPitch(){ const m=Math.PI/2 - 0.01; if(pitch>m) pitch=m; if(pitch<-m) pitch=-m; }
+    canvas.addEventListener('contextmenu', e=>e.preventDefault(), {passive:false});
+    window.addEventListener('mousemove', (e)=>{ if(!overlayHidden) return; if(isTyping()) return; if(lookMode!=='free' || lookDragging) return; const dx=e.movementX||0, dy=e.movementY||0; yaw -= dx*YAW_PER_PX; pitch += (invertY?1:-1)*dy*PITCH_PER_PX; clampPitch(); });
+    canvas.addEventListener('pointerdown', (e)=>{ if(e.button===2){ lookDragging=true; dragPixels=0; try{ canvas.setPointerCapture(e.pointerId);}catch(_){} } else if(e.button===0){ e.preventDefault(); const npcHit=pickNPC(); if(npcHit) openNPCChat(npcHit.object.userData.npc); else mineUnderCrosshair(); } }, {passive:false});
+    canvas.addEventListener('pointermove', (e)=>{ if(!lookDragging) return; const dx=e.movementX||0, dy=e.movementY||0; yaw -= dx*YAW_PER_PX; pitch += (invertY?1:-1)*dy*PITCH_PER_PX; clampPitch(); dragPixels += Math.abs(dx)+Math.abs(dy); });
+    canvas.addEventListener('pointerup', (e)=>{ if(e.button===2){ const didDrag=dragPixels>3; lookDragging=false; dragPixels=0; try{ canvas.releasePointerCapture(e.pointerId);}catch(_){} if(!didDrag) placeAtTargetOrFront(); } });
+
+    // Hotbar
+    hud.addEventListener('click', (e)=>{ const el=e.target.closest('.slot'); if(!el) return; const i=Number(el.dataset.i); if(Number.isInteger(i)) setSelected(i); });
+    window.addEventListener('wheel', (e)=>{ if(!overlayHidden) return; if(isTyping()) return; const dir=e.deltaY>0?1:-1; setSelected((selectedIndex+dir+BLOCK_TYPES.length)%BLOCK_TYPES.length); }, {passive:true});
+    function setSelected(i){ selectedIndex=i; updateHotbar(); }
+
+    // Mining/placing
+    const raycaster=new THREE.Raycaster(); raycaster.far=8;
+    function pickBlock(){ raycaster.setFromCamera(new THREE.Vector2(0,0), camera); const hits=raycaster.intersectObjects(blockMeshes, true); if(!hits.length) return null; let h=hits[0]; let o=h.object; while(o && !o.userData.grid) o=o.parent; if(!o) return null; h.object=o; return h; }
+    function mineUnderCrosshair(){ const hit=pickBlock(); if(hit){ const {x,y,z}=hit.object.userData.grid; removeBlock(x,y,z); return true; } return false; }
+    function placeAdjacentToHit(hit){ if(!hit.face){ placeInFrontOfPlayer(); return; } const localNormal=hit.face.normal.clone(); const normalMatrix=new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld); const worldNormal=localNormal.applyMatrix3(normalMatrix).round(); const {x,y,z}=hit.object.userData.grid; tryPlace(x+worldNormal.x, y+worldNormal.y, z+worldNormal.z); }
+    function placeInFrontOfPlayer(){ const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw)); const tx=Math.floor(camera.position.x + forward.x*1.5); const tz=Math.floor(camera.position.z + forward.z*1.5); const top=groundTopAt(tx+0.001, tz+0.001); tryPlace(tx, top, tz); }
+    function placeAtTargetOrFront(){ const hit=pickBlock(); if(hit) placeAdjacentToHit(hit); else placeInFrontOfPlayer(); }
+    function tryPlace(x,y,z){ if(y<0||y>MAX_COLUMN_SCAN) return; const id=keyXYZ(x,y,z); if(posToMesh.has(id)) return; addBlock(x,y,z,BLOCK_TYPES[selectedIndex]); }
+
+    // Ground helpers & collisions
+    function groundTopAt(x,z){ const xi=Math.floor(x), zi=Math.floor(z); const k=keyXZ(xi,zi); const h=heightMap.get(k); if(h!=null) return h; return terrainHeightAt(xi,zi); }
+    function isColumnClear(ix,iz,yFrom,height){ const yTo=Math.floor(yFrom+height-1e-6); for(let iy=Math.floor(yFrom); iy<=yTo; iy++){ if(isSolid(ix,iy,iz)) return false; } return true; }
+    function collideAxis(prevPos,nextPos,axis,eyeH){ const r=PLAYER_RADIUS; const feetY=nextPos.y-eyeH; const headY=feetY+PLAYER_HEIGHT; const minX=Math.floor(nextPos.x-r), maxX=Math.floor(nextPos.x+r); const minZ=Math.floor(nextPos.z-r), maxZ=Math.floor(nextPos.z+r); const minY=Math.floor(feetY), maxY=Math.ceil(headY)-1; let collided=false, sign=0, ix=0, iz=0, iy=0; for(let yy=minY; yy<=maxY; yy++){ for(let xx=minX; xx<=maxX; xx++){ for(let zz=maxZ; zz>=minZ; zz--){ if(!isSolid(xx,yy,zz)) continue; const overlapY=!(headY<=yy || feetY>=yy+1); const overlapX=!((nextPos.x+r)<=xx || (nextPos.x-r)>=xx+1); const overlapZ=!((nextPos.z+r)<=zz || (nextPos.z-r)>=zz+1); if(!overlapY) continue; if(axis==='x' && overlapZ && overlapX){ collided=true; sign=(prevPos.x<=xx)?+1:-1; ix=xx; iz=zz; iy=yy; nextPos.x=(sign>0? xx - r - EPS : xx + 1 + r + EPS); } if(axis==='z' && overlapX && overlapZ){ collided=true; sign=(prevPos.z<=zz)?+1:-1; ix=xx; iz=zz; iy=yy; nextPos.z=(sign>0? zz - r - EPS : zz + 1 + r + EPS); } } } } return {collided,sign,ix,iz,iy}; }
+    function tryAutoStep(prevPos,nextPos,axis,col,eyeH){ if(!col.collided) return false; const cur=groundTopAt(prevPos.x, prevPos.z); const feetY=prevPos.y-eyeH; if(Math.abs(feetY-cur)>0.05) return false; const dir=col.sign; if(dir===0) return false; const aheadX=Math.floor(nextPos.x + (axis==='x'? dir*(PLAYER_RADIUS+0.1) : 0)); const aheadZ=Math.floor(nextPos.z + (axis==='z'? dir*(PLAYER_RADIUS+0.1) : 0)); const toTop=groundTopAt(aheadX+0.001, aheadZ+0.001); const delta=toTop-cur; if(delta<=0 || delta>STEP_HEIGHT+1e-6) return false; if(!isColumnClear(aheadX,aheadZ,toTop,PLAYER_HEIGHT)) return false; nextPos.y=toTop+eyeH; onGround=true; return true; }
+    function collideCeiling(nextPos,eyeH){ const r=PLAYER_RADIUS; const feetY=nextPos.y-eyeH; const headY=feetY+PLAYER_HEIGHT; const minX=Math.floor(nextPos.x-r), maxX=Math.floor(nextPos.x+r); const minZ=Math.floor(nextPos.z-r), maxZ=Math.floor(nextPos.z+r); const iy=Math.floor(headY); for(let ix=minX; ix<=maxX; ix++){ for(let iz=maxZ; iz>=minZ; iz--){ if(isSolid(ix,iy,iz)){ nextPos.y=iy-EPS+eyeH; velocity.y=0; return; } } } }
+
+    // Hotbar UI
+    function updateHotbar(){ hud.innerHTML=''; BLOCK_TYPES.forEach((t,i)=>{ const el=document.createElement('div'); el.className='slot'+(i===selectedIndex?' selected':''); el.textContent=(i+1)+'\n'+t; el.style.whiteSpace='pre'; el.dataset.i=i; hud.appendChild(el); }); }
+    updateHotbar();
+
+    document.getElementById('help').textContent = `Controls
+WASD move • Space jump • Shift sprint • Ctrl crouch
+Mouse move look (F toggles RMB-drag) • I invert-Y
+Voice: Hold Y or click 🎤 • Replies are spoken aloud
+Click hotbar • Wheel/E/Q/1-5 select
+LMB mine • RMB place (or drag-release) • T talk to nearest AI
+Perf: V view distance • J shadows • K rebuild
+R reset • O save • P load`;
+
+    // Save/Load
+    const SAVE_KEY='mini-mc-world-v3';
+    function saveWorld(){ const blocks=[]; for(const [id,m] of posToMesh){ const {x,y,z,type}=m.userData.grid; blocks.push({x,y,z,type}); } const npcs=NPCS.map(n=>({name:n.name,model:n.model,x:Math.round(n.mesh.position.x-0.5),z:Math.round(n.mesh.position.z-0.5)})); localStorage.setItem(SAVE_KEY, JSON.stringify({blocks,npcs})); flash('World saved.'); }
+    function loadWorld(){ const raw=localStorage.getItem(SAVE_KEY); if(!raw){ flash('No saved world found.'); return; } resetWorld(true); const data=JSON.parse(raw); for(const b of data.blocks) addBlock(b.x,b.y,b.z,b.type); if(data.npcs){ for(const n of data.npcs) spawnNPC(n.name,n.model,n.x,n.z); } flash('World loaded.'); }
+    function resetWorld(keepSave=false){ for(const m of [...blockMeshes]) scene.remove(m); blockMeshes.length=0; posToMesh.clear(); columnToYset.clear(); heightMap.clear(); for(const k of [...loadedChunks.keys()]) unloadChunk(...k.split(',').map(Number)); ensureChunksAround(0,0); camera.position.set(0,START_Y,0); velocity.set(0,0,0); for(const n of [...NPCS]) scene.remove(n.mesh); NPCS.length=0; spawnDefaultNPCs(); if(!keepSave) flash('World reset.'); }
+
+    // Highlight
+    const highlight=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.001,1.001,1.001)), new THREE.LineBasicMaterial({color:0xffffff})); highlight.visible=false; scene.add(highlight);
+    function updateHighlight(){ const hit=pickBlock(); if(hit){ const {x,y,z}=hit.object.userData.grid; highlight.position.set(x+0.5,y+0.5,z+0.5); highlight.visible=true; } else highlight.visible=false; }
+
+    // NPCs & AI
+    const NPCS=[]; function makeNPCMesh(color){ const g=new THREE.Group(); const body=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,0.9,12), new THREE.MeshStandardMaterial({color})); body.position.y=0.45; const head=new THREE.Mesh(new THREE.SphereGeometry(0.22,16,12), new THREE.MeshStandardMaterial({color:0xffffff})); head.position.y=1.05; const base=new THREE.Mesh(new THREE.CircleGeometry(0.28,16), new THREE.MeshStandardMaterial({color:0x333333})); base.rotation.x=-Math.PI/2; g.add(base,body,head); setShadowRecursive(g); return g; }
+    function spawnNPC(name,model,x,z){ const mesh=makeNPCMesh(model==='ChatGPT'?0x10a37f:0x7443ff); mesh.position.set(x+0.5, groundTopAt(x+0.001,z+0.001), z+0.5); mesh.userData.npc={name,model,mesh}; scene.add(mesh); NPCS.push({name,model,mesh,lastDir:new THREE.Vector2(1,0),t:0}); return mesh; }
+    function spawnDefaultNPCs(){ spawnNPC('ChatGPT','ChatGPT',3,3); spawnNPC('Mixtral','Mixtral',-4,2); } spawnDefaultNPCs();
+    function updateNPCs(dt){ for(const n of NPCS){ n.t+=dt; if(n.t>2.5){ n.t=0; const ang=Math.random()*Math.PI*2; n.lastDir.set(Math.cos(ang),Math.sin(ang)); } const speed=0.8; const nx=n.mesh.position.x + n.lastDir.x*speed*dt; const nz=n.mesh.position.z + n.lastDir.y*speed*dt; const top=groundTopAt(nx,nz); n.mesh.position.set(nx,top,nz); } }
+
+    // NPC picking
+    const npcRay=new THREE.Raycaster(); function pickNPC(){ npcRay.setFromCamera(new THREE.Vector2(0,0),camera); const meshes=NPCS.map(n=>n.mesh); const hits=npcRay.intersectObjects(meshes,true); if(!hits.length) return null; let o=hits[0].object; while(o && !o.userData.npc) o=o.parent; return o?{object:o}:null; }
+    function nearestNPC(){ let best=null, d=Infinity; for(const n of NPCS){ const dd=n.mesh.position.distanceTo(camera.position); if(dd<d){ best=n; d=dd; } } return best && d<6? best : null; }
+
+    // Chat UI + Voice
+    const npcUI=document.getElementById('npcUI'), npcLog=document.getElementById('npcLog'), npcInput=document.getElementById('npcInput'), npcForm=document.getElementById('npcForm'), npcNameEl=document.getElementById('npcName'), npcModelEl=document.getElementById('npcModel'), npcClose=document.getElementById('npcClose'), npcMic=document.getElementById('npcMic'), npcModeEl=document.getElementById('npcMode');
+    let activeNPC=null; const supportsSTT=('webkitSpeechRecognition' in window)||('SpeechRecognition' in window); const supportsTTS='speechSynthesis' in window; let recognition=null;
+
+    function appendChat(who,text){ const line=document.createElement('div'); line.innerHTML=`<b>${who}:</b> ${text}`; npcLog.appendChild(line); npcLog.scrollTop=npcLog.scrollHeight; }
+    function getAIMode(){ const cfg=window.AI_CONFIG||{}; const p=cfg.providers&&(cfg.providers['ChatGPT']||cfg.providers['chatgpt']); return (cfg.mode==='proxy'&&p&&p.url)?'PROXY':'MOCK'; }
+    function updateAIModeBadge(){ if(npcModeEl) npcModeEl.textContent='AI: '+getAIMode(); }
+    function openNPCChat(npc){ activeNPC=npc; npcUI.classList.remove('hidden'); npcNameEl.textContent=npc.name; npcModelEl.textContent=`(${npc.model})`; updateAIModeBadge(); appendChat('system',`Talking to ${npc.name}.`); npcInput.focus(); }
+    function talkToNearestNPC(){ const n=nearestNPC(); if(n) openNPCChat(n.mesh.userData.npc); else flash('No AI nearby. Walk closer.'); }
+
+    // ----------- NATURAL TTS -----------
+    const TTS = (()=>{
+      const state = { queue:[], playing:false, voices:[], lastPick:null };
+
+      // Load voices (async in Chrome)
+      function refreshVoices(){ state.voices = (speechSynthesis.getVoices && speechSynthesis.getVoices()) || []; }
+      if(supportsTTS){
+        refreshVoices();
+        try{ speechSynthesis.onvoiceschanged = refreshVoices; }catch(_){}
+      }
+
+      // Prefer neural / high-quality voices if present
+      function pickVoice() {
+        if(!supportsTTS) return null;
+        refreshVoices();
+        const v = state.voices;
+        if(!v || !v.length) return null;
+        const prefer = [
+          /Neural/i, /Natural/i, /Premium/i,
+          /^Google.*English/i, /^Microsoft.*English/i,
+          /Samantha/i, /Jenny/i, /Aria/i, /Guy/i, /Emma/i, /Zira/i
+        ];
+        // Prioritize en-* locales
+        const en = v.filter(x=>/^en[-_]/i.test(x.lang||'') || /English/i.test(x.name||''));
+        const ordered = en.concat(v);
+        for(const re of prefer){
+          const hit = ordered.find(x=>re.test(x.name||''));
+          if(hit) return state.lastPick = hit;
+        }
+        return state.lastPick = ordered[0];
+      }
+
+      // Split text into natural chunks (sentences, then clauses)
+      function splitChunks(text){
+        const t = String(text||'').replace(/\s+/g,' ').trim();
+        if(!t) return [];
+        const sents = t
+          .split(/([.!?…]+)\s+/) // keep punctuation
+          .reduce((acc, part, i, arr)=>{
+            if(!part) return acc;
+            if(/^[.!?…]+$/.test(part)){
+              acc[acc.length-1] += part + ' ';
+            } else {
+              acc.push(part.trim());
+            }
+            return acc;
+          }, []);
+        // Further split long sentences by commas/semicolons
+        const chunks=[];
+        for(const s of sents){
+          if(s.length<=180){ chunks.push(s); continue; }
+          const bits=s.split(/[,;:]\s+/);
+          let cur='';
+          for(const b of bits){
+            const add = (cur?cur+' ': '') + b;
+            if(add.length>180 && cur){ chunks.push(cur); cur=b; }
+            else cur = add;
+          }
+          if(cur) chunks.push(cur);
+        }
+        return chunks;
+      }
+
+      // Gentle variations for prosody
+      function prosodyFor(chunk){
+        const q = /[?]$/.test(chunk);
+        const longish = chunk.length > 120;
+        const baseRate = longish ? 0.92 : 0.98;
+        const rate = Math.min(1.08, Math.max(0.85, baseRate + (Math.random()*0.06 - 0.03)));
+        const basePitch = q ? 1.06 : 1.0;
+        const pitch = Math.min(1.15, Math.max(0.9, basePitch + (Math.random()*0.04 - 0.02)));
+        return { rate, pitch };
+      }
+
+      function enqueueUtterance(text){
+        if(!supportsTTS) return;
+        const voice = state.lastPick || pickVoice();
+        const u = new SpeechSynthesisUtterance(text);
+        if(voice){ u.voice = voice; u.lang = voice.lang || (navigator.language||'en-US'); }
+        else { u.lang = navigator.language || 'en-US'; }
+        const { rate, pitch } = prosodyFor(text);
+        u.rate = rate; u.pitch = pitch; u.volume = 1;
+        u.onend = ()=>{ state.queue.shift(); state.playing=false; // tiny rest between chunks
+          setTimeout(()=>{ if(state.queue[0]) speechSynthesis.speak(state.queue[0]); }, 90);
+        };
+        state.queue.push(u);
+        if(!state.playing){
+          state.playing=true;
+          try{ speechSynthesis.cancel(); }catch(_){}
+          speechSynthesis.speak(u);
+        }
+      }
+
+      function speak(text){
+        if(!supportsTTS) return;
+        const chunks = splitChunks(text);
+        if(chunks.length===0) return;
+        if(chunks.length===1){ enqueueUtterance(chunks[0]); return; }
+        chunks.forEach(enqueueUtterance);
+      }
+
+      function cancel(){ if(!supportsTTS) return; state.queue.length=0; try{ speechSynthesis.cancel(); }catch(_){ } state.playing=false; }
+
+      return { speak, cancel, pickVoice };
+    })();
+
+    // Voice (Web Speech API): push-to-talk (Y) or mic button
+    function setupRecognition(){
+      if(!supportsSTT) return null;
+      const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+      const rec=new SR();
+      rec.continuous=false; rec.interimResults=true; rec.lang=navigator.language||'en-US';
+      rec.onstart=()=>{ dictating=true; npcMic?.setAttribute('aria-pressed','true'); appendChat('system','🎙️ listening…'); TTS.cancel(); }; // barge-in
+      rec.onend = ()=>{ npcMic?.setAttribute('aria-pressed','false'); setTimeout(()=>{ dictating=false; },50); };
+      rec.onerror=(e)=>{ appendChat('system','Mic error: '+e.error); };
+      rec.onresult=(e)=>{
+        let final='';
+        for(let i=e.resultIndex;i<e.results.length;i++){
+          const r=e.results[i];
+          if(r.isFinal) final+=r[0].transcript;
+        }
+        if(final.trim()){
+          npcInput.value=final.trim();
+          npcForm.dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));
+        }
+      };
+      return rec;
     }
-    setShadowRecursive(group); return group;
-  }
+    function startDictation(){ if(!supportsSTT){ appendChat('system','Voice not supported in this browser (try Chrome/Edge).'); return; } if(npcUI.classList.contains('hidden')){ const n=nearestNPC(); if(n) openNPCChat(n.mesh.userData.npc); else return flash('No AI nearby.'); } if(!recognition) recognition=setupRecognition(); try{ recognition.start(); }catch(_){} }
+    function stopDictation(){ if(recognition){ try{ recognition.stop(); }catch(_){} } }
 
-  function addBlock(x,y,z,type){ const id=keyXYZ(x,y,z); if(posToMesh.has(id)) return false; const g=createCellMesh(type); g.position.set(x+0.5, y+0.5, z+0.5); g.userData.grid={x,y,z,type}; g.traverse(o=>{ if(o!==g) o.userData.grid=g.userData.grid; }); scene.add(g); blockMeshes.push(g); posToMesh.set(id,g); const colK=keyXZ(x,z); if(!columnToYset.has(colK)) columnToYset.set(colK,new Set()); columnToYset.get(colK).add(y); updateColumnTop(x,z); return true; }
-  function removeBlock(x,y,z){ const id=keyXYZ(x,y,z); const m=posToMesh.get(id); if(!m) return false; scene.remove(m); const idx=blockMeshes.indexOf(m); if(idx>-1) blockMeshes.splice(idx,1); posToMesh.delete(id); const colK=keyXZ(x,z); const ys=columnToYset.get(colK); if(ys){ ys.delete(y); if(ys.size===0) columnToYset.delete(colK); } updateColumnTop(x,z); return true; }
-  function isSolid(ix,iy,iz){ return !!posToMesh.get(keyXYZ(ix,iy,iz)); }
+    if(npcMic){ npcMic.addEventListener('pointerdown', ()=> startDictation()); npcMic.addEventListener('pointerup', ()=> stopDictation()); npcMic.addEventListener('pointerleave', ()=> stopDictation()); npcMic.addEventListener('click', (e)=> e.preventDefault()); }
 
-  // ===== Procedural Terrain (same idea, but lighter heights) =====
-  const SEED = 12345;
-  function hash(x,z){ let h = x*374761393 + z*668265263 + SEED*1442695040888963407; h = (h ^ (h>>13))|0; h = Math.imul(h, 1274126177); h ^= h>>>16; return (h>>>0)/4294967296; }
-  function lerp(a,b,t){ return a + (b-a)*t; } function smooth(t){ return t*t*(3-2*t); }
-  function valueNoise2D(x,z){ const xi=Math.floor(x), zi=Math.floor(z); const xf=x-xi, zf=z-zi; const h00=hash(xi,zi), h10=hash(xi+1,zi), h01=hash(xi,zi+1), h11=hash(xi+1,zi+1); const u=smooth(xf), v=smooth(zf); return lerp(lerp(h00,h10,u), lerp(h01,h11,u), v); }
-  function fbm(x,z){ let f=0, amp=1, sum=0; for(let i=0;i<4;i++){ sum += valueNoise2D(x*f+100, z*f+100)*amp; f = f? f*2 : 0.05; amp*=0.5; } return sum/(1-0.5**4); }
-  function terrainHeightAt(x,z){ let base = 2.5; let hills = Math.floor(fbm(x, z)*PERF.maxTerrainHeight); let h = Math.max(1, Math.min(PERF.maxTerrainHeight, Math.floor(base + hills)) ); if(x===0 && z===0) h=1; return h; }
+    npcForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const text=npcInput.value.trim();
+      if(!text||!activeNPC) return;
+      appendChat('you', text);
+      npcInput.value='';
+      const reply=await askModel(activeNPC.model, text);
+      appendChat(activeNPC.model, reply);
+      speakReply(activeNPC.model, reply);
+    });
+    npcClose.addEventListener('click', ()=>{ npcUI.classList.add('hidden'); activeNPC=null; });
+    npcInput.addEventListener('keydown', (e)=>{ e.stopPropagation(); if(e.code==='Escape'){ npcUI.classList.add('hidden'); activeNPC=null; npcInput.blur(); } });
 
-  function scheduleChunkBuild(cx,cz){ const x0=cx*CHUNK_SIZE, z0=cz*CHUNK_SIZE; const pending=[]; for(let x=x0; x<x0+CHUNK_SIZE; x++){ for(let z=z0; z<z0+CHUNK_SIZE; z++){ const h=terrainHeightAt(x,z); for(let y=0;y<h;y++){ pending.push({x,y,z,type: (y===h-1?'grass':'dirt')}); } } } loadedChunks.set(keyChunk(cx,cz), { state:'building', pending }); buildQueue.push(...pending); }
-  function ensureChunksAround(px,pz){ const ccx=Math.floor(Math.floor(px)/CHUNK_SIZE), ccz=Math.floor(Math.floor(pz)/CHUNK_SIZE); for(let dx=-PERF.viewDist; dx<=PERF.viewDist; dx++){ for(let dz=-PERF.viewDist; dz<=PERF.viewDist; dz++){ const k=keyChunk(ccx+dx, ccz+dz); if(!loadedChunks.has(k)) scheduleChunkBuild(ccx+dx, ccz+dz); } } for(const k of [...loadedChunks.keys()]){ const [cx,cz]=k.split(',').map(Number); if(Math.abs(cx-ccx)>PERF.viewDist+1 || Math.abs(cz-ccz)>PERF.viewDist+1){ unloadChunk(cx,cz); } }
-  }
-  function unloadChunk(cx,cz){ const k=keyChunk(cx,cz); const ch=loadedChunks.get(k); if(!ch) return; // remove everything in bounds
-    const x0=cx*CHUNK_SIZE, z0=cz*CHUNK_SIZE; for(let x=x0; x<x0+CHUNK_SIZE; x++){ for(let z=z0; z<z0+CHUNK_SIZE; z++){ const top=heightMap.get(keyXZ(x,z)); if(top!=null){ for(let y=0;y<top;y++){ removeBlock(x,y,z); } } } } loadedChunks.delete(k);
-  }
-
-  // initial terrain queued (no big stall)
-  ensureChunksAround(0,0);
-
-  // ====== Controls ======
-  const overlay = document.getElementById('overlay');
-  const playBtn = document.getElementById('play');
-  const statsEl = document.getElementById('stats');
-  const hud = document.getElementById('hud');
-
-  let yaw = 0, pitch = -0.2;
-  let currentEye = EYE_STAND;
-  const velocity = new THREE.Vector3();
-  let onGround = false;
-  let pressed = { w:false, a:false, s:false, d:false, space:false, shift:false, ctrl:false };
-  let invertY = false;
-
-  // Look control (no pointer lock)
-  let overlayHidden = false; let lookMode = 'free'; let lookDragging = false; let dragPixels = 0;
-
-  let lastGroundedAt = performance.now(); let lastJumpPressedAt = -Infinity;
-
-  // When typing in any input/textarea/contentEditable, ignore game controls
-  function isTyping(){
-    const el = document.activeElement;
-    return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable === true);
-  }
-
-  playBtn.addEventListener('click', ()=>{ overlay.classList.add('hidden'); overlayHidden = true; flash('Free‑look enabled. Click hotbar to select blocks.'); });
-
-  window.addEventListener('keydown', (e)=>{ if(e.repeat) return; if(isTyping()) return; switch(e.code){
-    case 'KeyW': pressed.w=true; break; case 'KeyA': pressed.a=true; break; case 'KeyS': pressed.s=true; break; case 'KeyD': pressed.d=true; break;
-    case 'Space': pressed.space=true; lastJumpPressedAt = performance.now(); break;
-    case 'ShiftLeft': case 'ShiftRight': pressed.shift=true; break; case 'ControlLeft': case 'ControlRight': pressed.ctrl=true; break;
-    case 'Digit1': setSelected(0); break; case 'Digit2': setSelected(1); break; case 'Digit3': setSelected(2); break; case 'Digit4': setSelected(3); break; case 'Digit5': setSelected(4); break;
-    case 'KeyE': setSelected((selectedIndex+1)%BLOCK_TYPES.length); break; case 'KeyQ': setSelected((selectedIndex-1+BLOCK_TYPES.length)%BLOCK_TYPES.length); break;
-    case 'KeyR': resetWorld(); break; case 'KeyO': saveWorld(); break; case 'KeyP': loadWorld(); break; case 'KeyI': invertY = !invertY; flash(invertY? 'Invert‑Y ON':'Invert‑Y OFF'); break;
-    case 'KeyF': lookMode = (lookMode==='free'? 'drag':'free'); flash(lookMode==='free'? 'Free‑look ON (move mouse)':'RMB‑drag look mode ON'); break;
-    case 'KeyT': talkToNearestNPC(); break;
-    case 'KeyV': PERF.viewDist = Math.max(1, Math.min(3, PERF.viewDist===1?2:(PERF.viewDist===2?3:1))); flash('View distance: '+PERF.viewDist); break;
-    case 'KeyJ': PERF.shadows = !PERF.shadows; renderer.shadowMap.enabled = PERF.shadows; sun.castShadow = PERF.shadows; flash('Shadows: '+(PERF.shadows?'ON':'OFF')); break;
-    case 'KeyK': // rebuild nearby chunks with new perf settings
-      for(const k of [...loadedChunks.keys()]) unloadChunk(...k.split(',').map(Number));
-      ensureChunksAround(camera.position.x, camera.position.z);
-      flash('Rebuilding world...');
-      break;
-    case 'ArrowLeft': yaw += 0.04; break; case 'ArrowRight': yaw -= 0.04; break; case 'ArrowUp': pitch += 0.03; clampPitch(); break; case 'ArrowDown': pitch -= 0.03; clampPitch(); break; }
-  });
-  window.addEventListener('keyup', (e)=>{ if(isTyping()) return; switch(e.code){ case 'KeyW': pressed.w=false; break; case 'KeyA': pressed.a=false; break; case 'KeyS': pressed.s=false; break; case 'KeyD': pressed.d=false; break; case 'Space': pressed.space=false; break; case 'ShiftLeft': case 'ShiftRight': pressed.shift=false; break; case 'ControlLeft': case 'ControlRight': pressed.ctrl=false; break; } });
-
-  function clampPitch(){ const maxPitch = Math.PI/2 - 0.01; if(pitch>maxPitch) pitch=maxPitch; if(pitch<-maxPitch) pitch=-maxPitch; }
-
-  canvas.addEventListener('contextmenu', (e)=> e.preventDefault(), { passive:false });
-  window.addEventListener('mousemove', (e)=>{ if(!overlayHidden) return; if(isTyping()) return; if(lookMode!=='free' || lookDragging) return; const dx=(e.movementX||0), dy=(e.movementY||0); yaw -= dx*YAW_PER_PX; pitch += (invertY?1:-1)*dy*PITCH_PER_PX; clampPitch(); });
-  canvas.addEventListener('pointerdown', (e)=>{ if(e.button===2){ lookDragging=true; dragPixels=0; try{ canvas.setPointerCapture(e.pointerId);}catch(_){ }} else if(e.button===0){ e.preventDefault(); const npcHit=pickNPC(); if(npcHit) openNPCChat(npcHit.object.userData.npc); else mineUnderCrosshair(); } }, { passive:false });
-  canvas.addEventListener('pointermove', (e)=>{ if(!lookDragging) return; const dx=(e.movementX||0), dy=(e.movementY||0); yaw -= dx*YAW_PER_PX; pitch += (invertY?1:-1)*dy*PITCH_PER_PX; clampPitch(); dragPixels += Math.abs(dx)+Math.abs(dy); });
-  canvas.addEventListener('pointerup', (e)=>{ if(e.button===2){ const didDrag=dragPixels>3; lookDragging=false; dragPixels=0; try{ canvas.releasePointerCapture(e.pointerId);}catch(_){ } if(!didDrag){ placeAtTargetOrFront(); } } });
-
-  // Hotbar
-  hud.addEventListener('click', (e)=>{ const el=e.target.closest('.slot'); if(!el) return; const i=Number(el.dataset.i); if(Number.isInteger(i)) setSelected(i); });
-  window.addEventListener('wheel', (e)=>{ if(!overlayHidden) return; if(isTyping()) return; const dir = e.deltaY>0? 1 : -1; setSelected((selectedIndex + dir + BLOCK_TYPES.length)%BLOCK_TYPES.length); }, { passive:true });
-  function setSelected(i){ selectedIndex = i; updateHotbar(); }
-
-  // Mining & placing (blocks)
-  const raycaster = new THREE.Raycaster(); raycaster.far = 8;
-  function pickBlock(){ raycaster.setFromCamera(new THREE.Vector2(0,0), camera); const hits = raycaster.intersectObjects(blockMeshes, true); if(!hits.length) return null; let h = hits[0]; let o=h.object; while(o && !o.userData.grid) o=o.parent; if(!o) return null; h.object=o; return h; }
-  function mineUnderCrosshair(){ const hit = pickBlock(); if(hit){ const {x,y,z} = hit.object.userData.grid; removeBlock(x,y,z); return true; } return false; }
-  function placeAdjacentToHit(hit){ if(!hit.face){ placeInFrontOfPlayer(); return; } const localNormal=hit.face.normal.clone(); const normalMatrix=new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld); const worldNormal=localNormal.applyMatrix3(normalMatrix).round(); const {x,y,z} = hit.object.userData.grid; tryPlace(x+worldNormal.x, y+worldNormal.y, z+worldNormal.z); }
-  function placeInFrontOfPlayer(){ const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw)); const tx=Math.floor(camera.position.x + forward.x*1.5); const tz=Math.floor(camera.position.z + forward.z*1.5); const top=groundTopAt(tx+0.001, tz+0.001); tryPlace(tx, top, tz); }
-  function placeAtTargetOrFront(){ const hit=pickBlock(); if(hit){ placeAdjacentToHit(hit); } else { placeInFrontOfPlayer(); } }
-  function tryPlace(x,y,z){ if(y<0 || y>MAX_COLUMN_SCAN) return; const id=keyXYZ(x,y,z); if(posToMesh.has(id)) return; addBlock(x,y,z, BLOCK_TYPES[selectedIndex]); }
-
-  // Ground helpers
-  function groundTopAt(x,z){ const xi=Math.floor(x), zi=Math.floor(z); const k=keyXZ(xi,zi); const h=heightMap.get(k); if(h!=null) return h; return terrainHeightAt(xi,zi); }
-  function isColumnClear(ix,iz, yFrom, height){ const yTo = Math.floor(yFrom + height - 1e-6); for(let iy=Math.floor(yFrom); iy<=yTo; iy++){ if(isSolid(ix,iy,iz)) return false; } return true; }
-
-  function collideAxis(prevPos, nextPos, axis, eyeH){ const r=PLAYER_RADIUS; const feetY=nextPos.y - eyeH; const headY=feetY + PLAYER_HEIGHT; const minX=Math.floor(nextPos.x - r), maxX=Math.floor(nextPos.x + r); const minZ=Math.floor(nextPos.z - r), maxZ=Math.floor(nextPos.z + r); const minY=Math.floor(feetY), maxY=Math.ceil(headY) - 1; let collided=false, collideSign=0, collideIx=0, collideIz=0, collideIy=0; for(let iy=minY; iy<=maxY; iy++){ for(let ix=minX; ix<=maxX; ix++){ for(let iz=minZ; iz<=maxZ; iz++){ if(!isSolid(ix,iy,iz)) continue; const overlapY = !(headY <= iy || feetY >= iy+1); const overlapX = !( (nextPos.x + r) <= ix || (nextPos.x - r) >= ix+1 ); const overlapZ = !( (nextPos.z + r) <= iz || (nextPos.z - r) >= iz+1 ); if(!overlapY) continue; if(axis==='x' && overlapZ && overlapX){ collided=true; collideSign=(prevPos.x<=ix)? +1:-1; collideIx=ix; collideIz=iz; collideIy=iy; nextPos.x = (collideSign>0? ix - r - EPS : ix + 1 + r + EPS); } if(axis==='z' && overlapX && overlapZ){ collided=true; collideSign=(prevPos.z<=iz)? +1:-1; collideIx=ix; collideIz=iz; collideIy=iy; nextPos.z = (collideSign>0? iz - r - EPS : iz + 1 + r + EPS); } } } } return { collided, collideSign, collideIx, collideIz, collideIy }; }
-  function tryAutoStep(prevPos, nextPos, axis, collideInfo, eyeH){ if(!collideInfo.collided) return false; const curGround=groundTopAt(prevPos.x, prevPos.z); const feetY=prevPos.y - eyeH; if(Math.abs(feetY - curGround) > 0.05) return false; const dir=collideInfo.collideSign; if(dir===0) return false; const aheadX = Math.floor(nextPos.x + (axis==='x'? dir*(PLAYER_RADIUS+0.1) : 0)); const aheadZ = Math.floor(nextPos.z + (axis==='z'? dir*(PLAYER_RADIUS+0.1) : 0)); const toTop = groundTopAt(aheadX + 0.001, aheadZ + 0.001); const delta=toTop - curGround; if(delta<=0 || delta>STEP_HEIGHT+1e-6) return false; if(!isColumnClear(aheadX, aheadZ, toTop, PLAYER_HEIGHT)) return false; nextPos.y = toTop + eyeH; onGround=true; return true; }
-  function collideCeiling(nextPos, eyeH){ const r=PLAYER_RADIUS; const feetY=nextPos.y - eyeH; const headY=feetY + PLAYER_HEIGHT; const minX=Math.floor(nextPos.x - r), maxX=Math.floor(nextPos.x + r); const minZ=Math.floor(nextPos.z - r), maxZ=Math.floor(nextPos.z + r); const iy=Math.floor(headY); for(let ix=minX; ix<=maxX; ix++){ for(let iz=minZ; iz<=maxZ; iz++){ if(isSolid(ix,iy,iz)){ nextPos.y = iy - EPS + eyeH; velocity.y=0; return; } } } }
-
-  // ====== Hotbar UI ======
-  function updateHotbar(){ hud.innerHTML = ''; BLOCK_TYPES.forEach((t,i)=>{ const el=document.createElement('div'); el.className='slot'+(i===selectedIndex?' selected':''); el.textContent=(i+1)+'\n'+t; el.style.whiteSpace='pre'; el.dataset.i=i; hud.appendChild(el); }); }
-  updateHotbar();
-
-  // Help text
-  document.getElementById('help').textContent = `Controls\nWASD move • Space jump • Shift sprint • Ctrl crouch\nMouse move look (F toggles RMB‑drag) • I invert‑Y\nClick hotbar • Wheel/E/Q/1‑5 select\nLMB mine • RMB place (or drag‑release) • T talk to nearest AI\nPerf: V view distance • J shadows • K rebuild\nR reset • O save • P load`;
-
-  // ====== Save / Load World (localStorage) ======
-  const SAVE_KEY = 'mini-mc-world-v3';
-  function saveWorld(){ const blocks=[]; for(const [id,m] of posToMesh){ const {x,y,z,type}=m.userData.grid; blocks.push({x,y,z,type}); } const npcs = NPCS.map(n=>({ name:n.name, model:n.model, x:Math.round(n.mesh.position.x-0.5), z:Math.round(n.mesh.position.z-0.5) })); localStorage.setItem(SAVE_KEY, JSON.stringify({ blocks, npcs })); flash('World saved.'); }
-  function loadWorld(){ const raw=localStorage.getItem(SAVE_KEY); if(!raw){ flash('No saved world found.'); return; } resetWorld(true); const data=JSON.parse(raw); for(const b of data.blocks){ addBlock(b.x,b.y,b.z,b.type); } if(data.npcs){ for(const n of data.npcs){ spawnNPC(n.name, n.model, n.x, n.z); } } flash('World loaded.'); }
-  function resetWorld(keepSave=false){ for(const m of [...blockMeshes]){ scene.remove(m); } blockMeshes.length=0; posToMesh.clear(); columnToYset.clear(); heightMap.clear(); for(const k of [...loadedChunks.keys()]) unloadChunk(...k.split(',').map(Number)); ensureChunksAround(0,0); camera.position.set(0, START_Y, 0); velocity.set(0,0,0); for(const n of [...NPCS]){ scene.remove(n.mesh); } NPCS.length=0; spawnDefaultNPCs(); if(!keepSave) flash('World reset.'); }
-
-  // ====== Highlight block under crosshair ======
-  const highlight = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.001,1.001,1.001)), new THREE.LineBasicMaterial({ color: 0xffffff })); highlight.visible=false; scene.add(highlight);
-  function updateHighlight(){ const hit = pickBlock(); if(hit){ const {x,y,z} = hit.object.userData.grid; highlight.position.set(x+0.5, y+0.5, z+0.5); highlight.visible=true; } else { highlight.visible=false; } }
-
-  // ====== AI NPCs ======
-  const NPCS = [];
-  function makeNPCMesh(color=0xdddddd){ const g = new THREE.Group(); const body=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,0.9,12), new THREE.MeshStandardMaterial({color})); body.position.y=0.45; const head=new THREE.Mesh(new THREE.SphereGeometry(0.22,16,12), new THREE.MeshStandardMaterial({color:0xffffff})); head.position.y=1.05; const base=new THREE.Mesh(new THREE.CircleGeometry(0.28,16), new THREE.MeshStandardMaterial({color:0x333333})); base.rotation.x=-Math.PI/2; g.add(base,body,head); setShadowRecursive(g); return g; }
-  function spawnNPC(name, model, x, z){ const mesh=makeNPCMesh(model==='ChatGPT'?0x10a37f:0x7443ff); mesh.position.set(x+0.5, groundTopAt(x+0.001,z+0.001), z+0.5); mesh.userData.npc = { name, model, mesh }; scene.add(mesh); NPCS.push({ name, model, mesh, lastDir:new THREE.Vector2(1,0), t:0 }); return mesh; }
-  function spawnDefaultNPCs(){ spawnNPC('ChatGPT', 'ChatGPT', 3, 3); spawnNPC('Mixtral', 'Mixtral', -4, 2); }
-  spawnDefaultNPCs();
-
-  // NPC wandering (lightweight)
-  function updateNPCs(dt){ for(const n of NPCS){ n.t += dt; if(n.t>2.5){ n.t=0; const ang=Math.random()*Math.PI*2; n.lastDir.set(Math.cos(ang), Math.sin(ang)); }
-      const speed=0.8; const nx = n.mesh.position.x + n.lastDir.x*speed*dt; const nz = n.mesh.position.z + n.lastDir.y*speed*dt; const top = groundTopAt(nx, nz); n.mesh.position.set(nx, top, nz); } }
-
-  // NPC picking
-  const npcRay = new THREE.Raycaster();
-  function pickNPC(){ npcRay.setFromCamera(new THREE.Vector2(0,0), camera); const meshes = NPCS.map(n=>n.mesh); const hits = npcRay.intersectObjects(meshes, true); if(!hits.length) return null; let o=hits[0].object; while(o && !o.userData.npc) o=o.parent; return o? { object:o } : null; }
-  function nearestNPC(){ let best=null, bestD=Infinity; for(const n of NPCS){ const d = n.mesh.position.distanceTo(camera.position); if(d<bestD){ best=n; bestD=d; } } return best && bestD<6? best : null; }
-
-  // NPC chat UI and AI adapters
-  const npcUI = document.getElementById('npcUI'); const npcLog = document.getElementById('npcLog'); const npcInput = document.getElementById('npcInput'); const npcForm = document.getElementById('npcForm'); const npcNameEl=document.getElementById('npcName'); const npcModelEl=document.getElementById('npcModel'); const npcClose=document.getElementById('npcClose');
-  let activeNPC = null;
-  npcForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const text=npcInput.value.trim(); if(!text||!activeNPC) return; appendChat('you', text); npcInput.value=''; const reply = await askModel(activeNPC.model, text); appendChat(activeNPC.model, reply); });
-  npcClose.addEventListener('click', ()=>{ npcUI.classList.add('hidden'); activeNPC=null; });
-  // While typing in the chat box, stop key events from reaching the game; allow ESC to close
-  npcInput.addEventListener('keydown', (e)=>{ e.stopPropagation(); if(e.code==='Escape'){ npcUI.classList.add('hidden'); activeNPC=null; npcInput.blur(); } });
-
-  function openNPCChat(npc){ activeNPC = npc; npcUI.classList.remove('hidden'); npcNameEl.textContent = npc.name; npcModelEl.textContent = `(${npc.model})`; appendChat('system', `Talking to ${npc.name}.`); npcInput.focus(); }
-  function talkToNearestNPC(){ const n = nearestNPC(); if(n) openNPCChat(n.mesh.userData.npc); else flash('No AI nearby. Walk closer.'); }
-  function appendChat(who, text){ const line=document.createElement('div'); line.innerHTML = `<b>${who}:</b> ${text}`; npcLog.appendChild(line); npcLog.scrollTop = npcLog.scrollHeight; }
-
-  // Adapter for AI models (mock by default; can proxy real APIs)
-  async function askModel(provider, prompt){ const cfg = window.AI_CONFIG || { mode:'mock' }; if(cfg.mode!=='proxy'){ return mockReply(provider, prompt); } const p = cfg.providers && (cfg.providers[provider] || cfg.providers[provider.toLowerCase()]); if(!p || !p.url){ return mockReply(provider, prompt); } try{ const res = await fetch(p.url, { method:'POST', headers:{ 'Content-Type':'application/json', ...(p.apiKey? { 'Authorization': `Bearer ${p.apiKey}` } : {}) }, body: JSON.stringify({ model: provider, messages:[{role:'system', content:'You are an NPC inside a voxel game.'},{role:'user', content: prompt}] }) }); const data = await res.json(); return (data && (data.reply || (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content))) || '[no reply]'; }catch(err){ console.warn('AI proxy error', err); return mockReply(provider, prompt + ' (offline)'); } }
-  function mockReply(provider, prompt){ const name = provider.toLowerCase(); const p = prompt.trim(); if(!p) return '...'; if(name.includes('mix')){ return `*Mixtral thinks:* ${transformWitty(p)}`; } return `*ChatGPT says:* ${transformHelpful(p)}`; }
-  function transformHelpful(s){ return s.length<120? `Interesting question about "${s}". Here are 2 ideas: 1) try building with grass on high ground, 2) use brick stairs for climbing.` : s.slice(0,140)+'…'; }
-  function transformWitty(s){ return s.split(' ').reverse().slice(0,18).join(' ') + ' 😉'; }
-
-  // ====== Game loop ======
-  let last = performance.now();
-  let lastChunkCX = 0, lastChunkCZ = 0;
-  function tick(now){
-    const dt = Math.min((now - last)/1000, 0.05); last = now;
-
-    // Stream terrain only when crossing a chunk boundary
-    const ccx=Math.floor(Math.floor(camera.position.x)/CHUNK_SIZE), ccz=Math.floor(Math.floor(camera.position.z)/CHUNK_SIZE);
-    if(ccx!==lastChunkCX || ccz!==lastChunkCZ){ ensureChunksAround(camera.position.x, camera.position.z); lastChunkCX=ccx; lastChunkCZ=ccz; }
-
-    // Build budget this frame
-    for(let i=0; i<PERF.maxBuildPerFrame && buildQueue.length>0; i++){
-      const b = buildQueue.shift(); addBlock(b.x,b.y,b.z,b.type);
-      const key = keyChunk(Math.floor(b.x/CHUNK_SIZE), Math.floor(b.z/CHUNK_SIZE)); const ch = loadedChunks.get(key); if(ch){ // mark ready when this chunk drained
-        if(!ch.pendingMarked){ ch.pendingMarked = ch.pending.length; ch.built = 0; }
-        ch.built++; if(ch.built >= ch.pendingMarked){ ch.state='ready'; }
+    // Adapter for AI models — keep your existing proxy behavior
+    async function askModel(provider, prompt){
+      const cfg=window.AI_CONFIG||{mode:'mock'};
+      if(cfg.mode!=='proxy') return mockReply(provider,prompt);
+      const p=cfg.providers && (cfg.providers[provider] || cfg.providers[String(provider).toLowerCase()]);
+      if(!p||!p.url) return mockReply(provider,prompt);
+      try{
+        const res=await fetch(p.url,{
+          method:'POST',
+          headers:{'Content-Type':'application/json', ...(p.apiKey?{'Authorization':`Bearer ${p.apiKey}`}:{})},
+          body: JSON.stringify({ model: provider, messages:[{role:'system',content:'You are an NPC inside a voxel game.'},{role:'user', content: prompt}] })
+        });
+        const data=await res.json();
+        return (data && (data.reply || (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content))) || '[no reply]';
+      }catch(err){
+        console.warn('AI proxy error', err);
+        return mockReply(provider, String(prompt)+' (offline)');
       }
     }
+    function mockReply(provider,prompt){
+      const name=String(provider||'').toLowerCase();
+      const p=String(prompt||'').trim();
+      if(!p) return '...';
+      if(name.includes('mix')) return `*Mixtral thinks:* ${p.split(' ').reverse().slice(0,18).join(' ')} 😉`;
+      return `*ChatGPT says:* ${p.length<120?`Interesting question about "${p}". Here are 2 ideas: 1) try building with grass on high ground, 2) use brick stairs for climbing.`: p.slice(0,140)+'…'}`;
+    }
 
-    // Day/Night
-    const t = now*0.00005; const sunX = Math.cos(t)*80, sunY = 40 + Math.sin(t)*30; sun.position.set(sunX, sunY, Math.sin(t)*80); const dayMix = THREE.MathUtils.clamp((sunY-5)/60, 0, 1); scene.background.setHSL(0.57, 0.5, 0.6*dayMix + 0.05); hemi.intensity = 0.35 + 0.4*dayMix; sun.intensity = 0.3 + 0.9*dayMix;
+    // Use the natural TTS for replies
+    function speakReply(provider, text){
+      if(!('speechSynthesis' in window)) return;
+      let clean=String(text||'').replace('*ChatGPT says:* ','').replace('*Mixtral thinks:* ','').trim();
+      // If model returns one huge paragraph with few stops, add light punctuation hints.
+      if(clean && !/[.!?]/.test(clean.slice(-1))) clean += '.';
+      TTS.speak(clean);
+    }
 
-    // Eye height & movement
-    currentEye = pressed.ctrl ? EYE_CROUCH : EYE_STAND;
-    const speed = MOVE_SPEED * (pressed.shift? SPRINT_MULT : 1) * (pressed.ctrl? CROUCH_MULT : 1);
+    // Movement loop
+    let last=performance.now(); let lastChunkCX=0, lastChunkCZ=0;
+    function tick(now){
+      const dt=Math.min((now-last)/1000,0.05); last=now; const ccx=Math.floor(Math.floor(camera.position.x)/CHUNK_SIZE), ccz=Math.floor(Math.floor(camera.position.z)/CHUNK_SIZE); if(ccx!==lastChunkCX||ccz!==lastChunkCZ){ ensureChunksAround(camera.position.x,camera.position.z); lastChunkCX=ccx; lastChunkCZ=ccz; }
+      for(let i=0;i<PERF.maxBuildPerFrame && buildQueue.length>0;i++){ const b=buildQueue.shift(); addBlock(b.x,b.y,b.z,b.type); }
+      const t=now*0.00005; const sunX=Math.cos(t)*80, sunY=40+Math.sin(t)*30; sun.position.set(sunX,sunY,Math.sin(t)*80); const dayMix=THREE.MathUtils.clamp((sunY-5)/60,0,1); scene.background.setHSL(0.57,0.5,0.6*dayMix+0.05); hemi.intensity=0.35+0.4*dayMix; sun.intensity=0.3+0.9*dayMix;
+      currentEye=pressed.ctrl?EYE_CROUCH:EYE_STAND; const speed=MOVE_SPEED*(pressed.shift?SPRINT_MULT:1)*(pressed.ctrl?CROUCH_MULT:1);
+      const accel=new THREE.Vector3(); const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw)); const right=new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0)); if(pressed.w) accel.add(forward); if(pressed.s) accel.sub(forward); if(pressed.a) accel.sub(right); if(pressed.d) accel.add(right); if(accel.lengthSq()>0) accel.normalize().multiplyScalar(speed);
+      const FRICTION=onGround?12:1.5; velocity.x += (accel.x-velocity.x)*Math.min(1,FRICTION*dt); velocity.z += (accel.z-velocity.z)*Math.min(1,FRICTION*dt); velocity.y += -GRAVITY*dt;
+      const nowMs=performance.now(); const canJump=(onGround||(nowMs-lastGroundedAt)<COYOTE_TIME*1000); const jumpQueued=(nowMs-lastJumpPressedAt)<JUMP_BUFFER*1000; if(canJump&&jumpQueued){ velocity.y=JUMP_VEL; onGround=false; lastJumpPressedAt=-Infinity; }
+      const prev=camera.position.clone(), next=camera.position.clone(); next.x += velocity.x*dt; const cx=collideAxis(prev,next,'x',currentEye); next.z += velocity.z*dt; const cz=collideAxis(prev,next,'z',currentEye); if(cx.collided) tryAutoStep(prev,next,'x',cx,currentEye); if(cz.collided) tryAutoStep(prev,next,'z',cz,currentEye); next.y += velocity.y*dt; const gtop=groundTopAt(next.x,next.z); const feet=next.y-currentEye; if(feet<=gtop){ if(!onGround) lastGroundedAt=performance.now(); onGround=true; next.y=gtop+currentEye; velocity.y=0; } else { onGround=false; if(velocity.y>0) collideCeiling(next,currentEye); }
+      camera.position.copy(next);
+      const lookDir=new THREE.Vector3(-Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw)*Math.cos(pitch)); camera.lookAt(camera.position.clone().add(lookDir));
+      updateNPCs(dt); updateHighlight(); statsEl.textContent=`XYZ ${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)}\nBlocks ${blockMeshes.length}  Chunks ${loadedChunks.size}  Queue ${buildQueue.length}`;
+      renderer.render(scene,camera); requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
 
-    const accel = new THREE.Vector3();
-    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-    const right   = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0));
-    if(pressed.w) accel.add(forward); if(pressed.s) accel.sub(forward); if(pressed.a) accel.sub(right); if(pressed.d) accel.add(right);
-    if(accel.lengthSq()>0){ accel.normalize().multiplyScalar(speed); }
+    // Misc UI helpers
+    function flash(msg){ const el=document.createElement('div'); el.textContent=msg; el.style.position='fixed'; el.style.left='50%'; el.style.top='12%'; el.style.translate='-50% -50%'; el.style.color='#fff'; el.style.background='rgba(0,0,0,0.55)'; el.style.border='1px solid rgba(255,255,255,0.35)'; el.style.padding='8px 12px'; el.style.borderRadius='10px'; el.style.zIndex='20'; el.style.font='12px system-ui'; document.body.appendChild(el); setTimeout(()=>el.remove(),1200); }
+    window.addEventListener('resize', ()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
-    const FRICTION = onGround ? 12 : 1.5;
-    velocity.x += (accel.x - velocity.x) * Math.min(1, FRICTION*dt);
-    velocity.z += (accel.z - velocity.z) * Math.min(1, FRICTION*dt);
+    // Runtime tests (unchanged + voice typing check)
+    (function runSelfTests(){ const results={pass:0,fail:0,logs:[]}; function assert(name,cond){ if(cond){results.pass++;} else {results.fail++; results.logs.push('FAIL: '+name);} }
+      assert('jump height > 1 block',(JUMP_VEL*JUMP_VEL)/(2*GRAVITY) > 1.0);
+      const AX=99,AY=1,AZ=99; const kxz=`${AX},${AZ}`; const before=blockMeshes.length; addBlock(AX,AY,AZ,'stone'); assert('addBlock placed', posToMesh.has(`${AX},${AY},${AZ}`)); assert('heightMap top==AY+1', heightMap.get(kxz)===AY+1); removeBlock(AX,AY,AZ); assert('removeBlock cleared', !posToMesh.has(`${AX},${AY},${AZ}`)); assert('heightMap reset to 0', heightMap.get(kxz)===0); assert('blockMeshes length restored', blockMeshes.length===before);
+      const idGround=`0,0,0`, idAbove=`0,1,0`; const hadAbove=posToMesh.has(idAbove); tryPlace(0,0,0); assert('no overwrite', posToMesh.has(idGround)); tryPlace(0,1,0); assert('placed above ground', posToMesh.has(idAbove)); if(!hadAbove) removeBlock(0,1,0);
+      const r=new THREE.Vector3().crossVectors(new THREE.Vector3(-Math.sin(0),0,-Math.cos(0)), new THREE.Vector3(0,1,0)); assert('right.x at yaw=0 is +1', Math.abs(r.x-1)<1e-6 && Math.abs(r.z)<1e-6);
+      const p=0.25; const dir=new THREE.Vector3(-Math.sin(0)*Math.cos(p), Math.sin(p), -Math.cos(0)*Math.cos(p)); assert('pitch positive looks up', dir.y>0);
+      setSelected(2); assert('selectedIndex==2', selectedIndex===2);
+      ensureChunksAround(0,0); assert('chunks > 0 after ensure', loadedChunks.size>0); assert('queue non-negative', buildQueue.length>=0); assert('groundTopAt(0,0)==1', groundTopAt(0,0)===1);
+      // typing detection
+      const ti=document.createElement('input'); document.body.appendChild(ti); ti.focus(); assert('isTyping true when input focused', isTyping()===true); ti.blur(); document.body.removeChild(ti);
+      const summary=`Self-tests: ${results.pass} passed, ${results.fail} failed`; console.log(summary); results.logs.forEach(l=>console.warn(l)); flash(summary);
+    })();
 
-    velocity.y += -GRAVITY * dt;
-
-    const nowMs = performance.now(); const canJump = (onGround || (nowMs - lastGroundedAt) < COYOTE_TIME*1000); const jumpQueued = (nowMs - lastJumpPressedAt) < JUMP_BUFFER*1000; if(canJump && jumpQueued){ velocity.y = JUMP_VEL; onGround=false; lastJumpPressedAt=-Infinity; }
-
-    const prevPos = camera.position.clone(); const nextPos = camera.position.clone();
-    const intendedX = nextPos.x + velocity.x * dt; nextPos.x = intendedX; const cx = collideAxis(prevPos, nextPos, 'x', currentEye);
-    const intendedZ = nextPos.z + velocity.z * dt; nextPos.z = intendedZ; const cz = collideAxis(prevPos, nextPos, 'z', currentEye);
-    if(cx.collided) tryAutoStep(prevPos, nextPos, 'x', cx, currentEye); if(cz.collided) tryAutoStep(prevPos, nextPos, 'z', cz, currentEye);
-
-    nextPos.y += velocity.y * dt; const groundTop = groundTopAt(nextPos.x, nextPos.z); const feetY = nextPos.y - currentEye;
-    if(feetY <= groundTop){ if(!onGround) lastGroundedAt = performance.now(); onGround = true; nextPos.y = groundTop + currentEye; velocity.y = 0; } else { onGround=false; if(velocity.y>0) collideCeiling(nextPos, currentEye); }
-
-    camera.position.copy(nextPos);
-
-    const lookDir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)); camera.lookAt(camera.position.clone().add(lookDir));
-
-    updateNPCs(dt);
-    updateHighlight();
-
-    statsEl.textContent = `XYZ ${(camera.position.x).toFixed(2)}, ${(camera.position.y).toFixed(2)}, ${(camera.position.z).toFixed(2)}\nBlocks ${blockMeshes.length}  Chunks ${loadedChunks.size}  Queue ${buildQueue.length}`;
-
-    renderer.render(scene, camera); requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-
-  // Flash helper
-  function flash(msg){ const el=document.createElement('div'); el.textContent=msg; el.style.position='fixed'; el.style.left='50%'; el.style.top='12%'; el.style.translate='-50% -50%'; el.style.color='#fff'; el.style.background='rgba(0,0,0,0.55)'; el.style.border='1px solid rgba(255,255,255,0.35)'; el.style.padding='8px 12px'; el.style.borderRadius='10px'; el.style.zIndex='20'; el.style.font='12px system-ui'; document.body.appendChild(el); setTimeout(()=>{ el.remove(); }, 1200); }
-
-  // Resize
-  window.addEventListener('resize', ()=>{ camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-
-  // ====== Runtime tests (existing kept; added a couple for perf queue) ======
-  (function runSelfTests(){
-    const results = { pass:0, fail:0, logs:[] }; function assert(name, cond){ if(cond){ results.pass++; } else { results.fail++; results.logs.push('FAIL: '+name); } }
-
-    // Existing checks
-    assert('jump height > 1 block', (JUMP_VEL*JUMP_VEL)/(2*GRAVITY) > 1.0);
-    const AX=99, AY=1, AZ=99; const kxz=`${AX},${AZ}`; const beforeBlocks = blockMeshes.length; addBlock(AX,AY,AZ,'stone'); assert('addBlock placed', posToMesh.has(`${AX},${AY},${AZ}`)); assert('heightMap top==AY+1', heightMap.get(kxz)===AY+1); removeBlock(AX,AY,AZ); assert('removeBlock cleared', !posToMesh.has(`${AX},${AY},${AZ}`)); assert('heightMap reset to 0', heightMap.get(kxz)===0); assert('blockMeshes length restored', blockMeshes.length===beforeBlocks);
-    const idGround=`${0},0,${0}`; const idAbove=`${0},1,${0}`; const hadAbove=posToMesh.has(idAbove); tryPlace(0,0,0); assert('no overwrite', posToMesh.has(idGround)); tryPlace(0,1,0); assert('placed above ground', posToMesh.has(idAbove)); if(!hadAbove) removeBlock(0,1,0);
-    const yaw0=0; const f=new THREE.Vector3(-Math.sin(yaw0),0,-Math.cos(yaw0)); const r=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0)); assert('right.x at yaw=0 is +1', Math.abs(r.x-1)<1e-6 && Math.abs(r.z)<1e-6);
-    const p=0.25; const dir=new THREE.Vector3(-Math.sin(0)*Math.cos(p), Math.sin(p), -Math.cos(0)*Math.cos(p)); assert('pitch positive looks up', dir.y>0);
-    setSelected(2); assert('selectedIndex==2', selectedIndex===2);
-
-    // Typing detection test
-    const ti=document.createElement('input'); document.body.appendChild(ti); ti.focus();
-    assert('isTyping() true when input focused', (function(){ return (document.activeElement===ti) && (typeof isTyping==='function') && isTyping(); })());
-    ti.blur(); document.body.removeChild(ti);
-
-    // Added perf/stream checks
-    ensureChunksAround(0,0); assert('chunks > 0 after ensure', loadedChunks.size>0);
-    assert('queue will eventually drain', buildQueue.length >= 0);
-    assert('groundTopAt(0,0) == 1 (stable)', groundTopAt(0,0) === 1);
-
-    const summary = `Self‑tests: ${results.pass} passed, ${results.fail} failed`; console.log(summary); results.logs.forEach(l=>console.warn(l)); flash(summary);
   })();
   </script>
 </body>
