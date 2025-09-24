@@ -33,6 +33,9 @@ git clone https://github.com/Esmail-ibraheem/Virtual-LLMs.git
 cd Virtual-LLMs
 ```
 
+<img width="1920" height="940" alt="image" src="https://github.com/user-attachments/assets/6c62fde3-f9d2-4b50-ad20-448cce8be706" />
+
+
 ## Running the Application
 
 ### Step 1: Start the AI Proxy Server
@@ -73,6 +76,9 @@ http://localhost:8080
 2. The application will communicate with the AI proxy server running on the backend
 3. You can interact with various LLM features through the intuitive web interface
 
+<img width="1915" height="927" alt="image" src="https://github.com/user-attachments/assets/abbd1df3-833e-43fc-aec6-65751601ef78" />
+
+
 ## Features
 
 - Web-based interface for LLM interactions
@@ -87,17 +93,4 @@ http://localhost:8080
 - Verify that the proxy server has the necessary API keys/configurations
 - Make sure you're in the correct directories when starting each server
 
-## License
 
-This project is open source. See the LICENSE file for more details.
-
----
-
-*For more information, please visit the [GitHub repository](https://github.com/Esmail-ibraheem/Virtual-LLMs).*
-
-The changes I made:
-- Added a centered div with proper alignment
-- Increased the image width to 600px
-- Added border-radius for better styling
-- Improved the overall layout and spacing
-- Added a repository link at the bottom for better navigation
