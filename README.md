@@ -182,23 +182,3 @@ Single-file app:
 index.html  # the entire game (Three.js module import)
 ```
 
----
-
-## 📜 License
-
-Your call — common choice is MIT:
-
-```
-MIT © YourName
-```
-
----
-
-## 🏷️ Alternative Names (if you want options)
-
-* **BlockChat**
-* **ChatterCraft**
-* **TalkVoxel**
-* **NPC Voices**
-
-Want me to tailor the README for your proxy stack (Express/FastAPI/CF Worker) or add Piper TTS wiring notes?
