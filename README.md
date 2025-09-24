@@ -2,8 +2,11 @@
 
 A web-based platform for interacting with Large Language Models (LLMs) through a proxy server and user interface.
 
-<img width="1920" height="940" alt="image" src="https://github.com/user-attachments/assets/5c49b313-1410-406d-8b32-66d4dfcb1889" />
+## Project Demo
 
+[![Virtual LLMs Demo](https://img.youtube.com/vi/KAclbo9ppKg/0.jpg)](https://www.youtube.com/watch?v=KAclbo9ppKg)
+
+*Click the image above to watch the project demo video*
 
 ## Project Structure
 
@@ -60,9 +63,6 @@ Open your web browser and go to:
 http://localhost:8080
 ```
 
-<img width="1915" height="927" alt="image" src="https://github.com/user-attachments/assets/b11a7976-ca99-41de-bd47-83a549e5dc8b" />
-
-
 ## Usage
 
 1. The web interface will load in your browser
@@ -82,3 +82,7 @@ http://localhost:8080
 - Check that port 8080 is available for the web server
 - Verify that the proxy server has the necessary API keys/configurations
 - Make sure you're in the correct directories when starting each server
+
+## License
+
+This project is open source. See the LICENSE file for more details.
